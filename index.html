@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="Kulka">
-<meta name="theme-color" content="#2a1408">
+<meta name="theme-color" content="#000000">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon-192.png">
@@ -15,12 +15,12 @@
 <style>
   :root { --brass: #e8c77a; --cream: #f6ecd6; }
   html, body {
-    margin: 0; height: 100%; overflow: hidden; background: #0d0603;
+    margin: 0; height: 100%; overflow: hidden; background: #000;
     touch-action: none; -webkit-user-select: none; user-select: none;
     font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     color: var(--cream);
   }
-  #c { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; height: 100lvh; display: block; }
+  #c { position: fixed; left: 0; top: 0; width: 100%; height: 100%; display: block; }
   #safe { position: fixed; top: 0; height: env(safe-area-inset-top, 0px); visibility: hidden; }
   #safeB { position: fixed; top: 0; height: env(safe-area-inset-bottom, 0px); visibility: hidden; }
   #hud {
@@ -119,8 +119,9 @@
   }
 
   // Pełny ekran także w trybie aplikacji na iPhonie (innerHeight bywa krótszy o pasek statusu)
-  // Rozmiar bierzemy z faktycznie wyrenderowanego płótna (CSS: 100lvh = pełny ekran także w trybie aplikacji).
-  // window.innerHeight na iPhonie w trybie aplikacji bywa zaniżony o pasek statusu.
+  // Rozmiar bierzemy z faktycznie wyrenderowanego płótna (pełny obszar strony).
+  // Pasek statusu jest celowo "black", nie "black-translucent": przy przezroczystym iOS zostawia
+  // na dole ekranu pas wysokości paska statusu, w którym strona nie może nic narysować.
   function screenSize() {
     const r = cv.getBoundingClientRect();
     return [Math.round(r.width) || innerWidth, Math.round(r.height) || innerHeight];
@@ -241,7 +242,7 @@
     // Stół łagodnie rozpływa się w ciemność u góry i u dołu ekranu
     const fade = (y0, y1) => {
       const g = t.createLinearGradient(0, y0, 0, y1);
-      g.addColorStop(0, 'rgba(13,6,3,1)'); g.addColorStop(.5, 'rgba(13,6,3,.85)'); g.addColorStop(1, 'rgba(13,6,3,0)');
+      g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(.5, 'rgba(0,0,0,.85)'); g.addColorStop(1, 'rgba(0,0,0,0)');
       t.fillStyle = g; t.fillRect(0, Math.min(y0, y1), W, Math.abs(y1 - y0));
     };
     fade(0, FRAME_T + 10);
