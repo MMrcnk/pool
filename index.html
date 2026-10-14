@@ -73,7 +73,6 @@
   <button id="play">Graj</button>
   <p class="hint">Trzymaj telefon tak, jak lubisz — ta pozycja zostanie ustawiona jako „poziom”.</p>
   <p id="err"></p>
-  <p id="diag" class="hint" style="font-size:11px;opacity:.45"></p>
 </div>
 
 <div id="over" class="overlay hidden">
@@ -149,13 +148,13 @@
     // górna i dolna rama tej samej grubości (stół wyśrodkowany); u góry mieści się pasek z wynikami
     const safeB = $('safeB').getBoundingClientRect().height || 0;
     // drewniana rama: od tuż pod paskiem statusu do tuż nad dolną krawędzią; poza nią stół się rozpływa
-    FRAME_T = Math.max(SAFE_T + 12, 14);
-    FRAME_B = Math.max(safeB - 6, 12);
+    FRAME_T = Math.max(SAFE_T + 2, 12);
+    FRAME_B = Math.max(safeB + 8, 16);
     RAIL_T = FRAME_T + RAIL + HUD_H;   // górna rama mieści pasek wyników
     RAIL_B = FRAME_B + RAIL;
     const hud = $('hud');
     hud.style.top = FRAME_T + 'px';
-    $('diag').textContent = `wersja 9 · okno ${innerWidth}×${innerHeight} · ekran ${screen.width}×${screen.height} · gra ${W}×${H} · pasek ${Math.round(SAFE_T)}/${Math.round(safeB)} · app ${isApp() ? 'tak' : 'nie'}`; hud.style.height = (RAIL + HUD_H) + 'px';
+    hud.style.height = (RAIL + HUD_H) + 'px';
     CUSH = RAIL * 0.42;
     F.x0 = RAIL + CUSH; F.x1 = W - RAIL - CUSH;
     F.y0 = RAIL_T + CUSH; F.y1 = H - RAIL_B - CUSH;
@@ -251,13 +250,32 @@
       dia(W - RAIL * .5, F.y0 + fh * k / 8);
     }
     // Stół łagodnie rozpływa się w ciemność u góry i u dołu ekranu
-    const fade = (y0, y1) => {
-      const g = t.createLinearGradient(0, y0, 0, y1);
-      g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(.5, 'rgba(0,0,0,.85)'); g.addColorStop(1, 'rgba(0,0,0,0)');
-      t.fillStyle = g; t.fillRect(0, Math.min(y0, y1), W, Math.abs(y1 - y0));
+    // Poza ramą (u góry i u dołu) drewno nie gaśnie w czerń, tylko łagodnie się rozmywa
+    const blurStrip = (y0, y1, outerAtTop) => {
+      const sy = Math.max(0, Math.floor(y0 * DPR)), sh = Math.min(table.height - sy, Math.ceil((y1 - y0) * DPR)), sw = table.width;
+      if (sh <= 0) return;
+      const mk = (w, h) => { const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h)); return c; };
+      // rozmycie przez zmniejszenie i ponowne powiększenie (działa w każdym Safari)
+      const small = mk(sw / 16, sh / 16), mid = mk(sw / 4, sh / 4), out = mk(sw, sh);
+      const sc = small.getContext('2d'), mc = mid.getContext('2d'), oc = out.getContext('2d');
+      sc.imageSmoothingQuality = mc.imageSmoothingQuality = oc.imageSmoothingQuality = 'high';
+      sc.drawImage(table, 0, sy, sw, sh, 0, 0, small.width, small.height);
+      mc.drawImage(small, 0, 0, mid.width, mid.height);
+      oc.drawImage(mid, 0, 0, sw, sh);
+      const grad = (stops) => {
+        const g = oc.createLinearGradient(0, outerAtTop ? 0 : sh, 0, outerAtTop ? sh : 0);
+        for (const [o, c] of stops) g.addColorStop(o, c);
+        return g;
+      };
+      // lekkie przyciemnienie przy samej krawędzi ekranu, żeby było głębiej (bez czarnego pasa)
+      oc.fillStyle = grad([[0, 'rgba(0,0,0,.3)'], [1, 'rgba(0,0,0,0)']]); oc.fillRect(0, 0, sw, sh);
+      // maska: pełne rozmycie przy krawędzi ekranu, płynne przejście w ostre drewno przy ramie
+      oc.globalCompositeOperation = 'destination-in';
+      oc.fillStyle = grad([[0, '#000'], [.5, 'rgba(0,0,0,.9)'], [1, 'rgba(0,0,0,0)']]); oc.fillRect(0, 0, sw, sh);
+      t.save(); t.setTransform(1, 0, 0, 1, 0, 0); t.drawImage(out, 0, sy); t.restore();
     };
-    fade(0, FRAME_T + 10);
-    fade(H, H - FRAME_B - 10);
+    blurStrip(0, FRAME_T + 14, true);
+    blurStrip(H - FRAME_B - 14, H, false);
     // Punkt środkowy na suknie
     t.fillStyle = 'rgba(255,255,255,.18)';
     t.beginPath(); t.arc(W / 2, F.y0 + fh * .75, 2.2, 0, Math.PI * 2); t.fill();
