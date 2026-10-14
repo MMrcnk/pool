@@ -62,7 +62,7 @@
 
 <div id="start" class="overlay">
   <h1>Kulka<br><span>kontra</span><br>Dziura</h1>
-  <p>Przechylaj telefon, żeby toczyć stalową kulkę po stole. Uciekaj przed wędrującą łuzą — z każdą sekundą goni szybciej. Dziura powoli rośnie — zbieraj niebieską kredę, żeby ją zmniejszyć. Gwiazdki dają punkty.</p>
+  <p>Przechylaj telefon, żeby toczyć stalową kulkę po stole. Uciekaj przed wędrującą łuzą — z każdą sekundą goni szybciej. Dziura powoli rośnie — zbieraj niebieską kredę, żeby ją zmniejszyć. Monety: srebrna +5, złota +10.</p>
   <button id="play">Graj</button>
   <p class="hint">Trzymaj telefon tak, jak lubisz — ta pozycja zostanie ustawiona jako „poziom”.</p>
   <p id="err"></p>
@@ -127,6 +127,7 @@
     const cy = (F.y0 + F.y1) / 2, sp = (F.y1 - F.y0) * 0.3;
     lamps = [-1, 0, 1].map(k => ({ x: W / 2, y: cy + k * sp }));
     buildTable();
+    buildCoins();
     if (S.state !== 'menu') clampToTable();
   }
 
@@ -420,7 +421,7 @@
   const S = { state: 'menu', t: 0, score: 0, bonus: 0 };
   const ball = { x: 0, y: 0, vx: 0, vy: 0, r: 16, fall: 0 };
   const hole = { x: -999, y: -999, vx: 0, vy: 0, r: 30 };
-  let stars = [], particles = [], starTimer = 0, chalkTimer = 0, holeBase = 0;
+  let stars = [], particles = [], popups = [], starTimer = 0, chalkTimer = 0, holeBase = 0;
   let best = 0;
   try { best = +localStorage.getItem('kulka-best') || 0; } catch {}
   $('best').textContent = best;
@@ -436,15 +437,15 @@
     hole.r = hole.rt = holeBase = ball.r * 1.7;
     ball.x = W / 2; ball.y = F.y0 + (F.y1 - F.y0) * 0.78; ball.vx = ball.vy = 0; ball.fall = 0;
     hole.x = W / 2; hole.y = F.y0 + (F.y1 - F.y0) * 0.15; hole.vx = hole.vy = 0;
-    S.t = 0; S.score = 0; S.bonus = 0; stars = []; particles = [];
+    S.t = 0; S.score = 0; S.bonus = 0; stars = []; particles = []; popups = [];
     starTimer = 1.5; chalkTimer = 9;
   }
-  function spawnStar(kind = 'star') {
+  function spawnStar(kind = Math.random() < .3 ? 'gold' : 'silver') {
     for (let tries = 0; tries < 20; tries++) {
       const m = 24;
       const x = F.x0 + m + Math.random() * (F.x1 - F.x0 - 2 * m), y = F.y0 + m + Math.random() * (F.y1 - F.y0 - 2 * m);
       if (Math.hypot(x - hole.x, y - hole.y) > hole.r * 4 && Math.hypot(x - ball.x, y - ball.y) > 80) {
-        stars.push({ x, y, kind, life: kind === 'chalk' ? 9 : 7, spin: Math.random() * 6 });
+        stars.push({ x, y, kind, life: kind === 'chalk' ? 9 : 7, spin: Math.random() * 6, fall: null });
         return;
       }
     }
@@ -470,6 +471,7 @@
       ball.y += (hole.y - ball.y) * Math.min(1, dt * 10);
       rollBall(ball.x - ox, ball.y - oy, ball.r);
       if (ball.fall >= 1) gameOver();
+      stepItems(dt);
       stepParticles(dt);
       return;
     }
@@ -513,15 +515,25 @@
       chalkTimer = 8 + Math.random() * 5;
     }
     for (const s of stars) {
-      s.life -= dt; s.spin += dt * 2;
-      if (Math.hypot(s.x - ball.x, s.y - ball.y) < ball.r + 13) {
+      if (s.fall !== null) continue;
+      s.life -= dt;
+      if (Math.hypot(s.x - ball.x, s.y - ball.y) < ball.r + 12) {
         s.life = -1;
-        if (s.kind === 'chalk') { hole.rt = Math.max(holeBase, hole.rt * 0.62); burst(s.x, s.y, '#8fd0ff'); burst(hole.x, hole.y, '#8fd0ff'); }
-        else { S.bonus += 5; burst(s.x, s.y); }
+        if (s.kind === 'chalk') {
+          hole.rt = Math.max(holeBase, hole.rt * 0.62);
+          burst(s.x, s.y, '#8fd0ff'); burst(hole.x, hole.y, '#8fd0ff');
+          popups.push({ x: s.x, y: s.y, text: 'mniejsza!', color: '#9fd8ff', life: 1 });
+        } else {
+          const pts = s.kind === 'gold' ? 10 : 5, col = s.kind === 'gold' ? '#ffd76a' : '#eef3f8';
+          S.bonus += pts; burst(s.x, s.y, col);
+          popups.push({ x: s.x, y: s.y, text: '+' + pts, color: col, life: 1 });
+        }
+      } else if (Math.hypot(s.x - hole.x, s.y - hole.y) < hole.r + 6) {
+        // zaczyna wpadać: zapamiętaj pozycję względem dziury, żeby jechać razem z nią
+        s.fall = 0; s.ox = s.x - hole.x; s.oy = s.y - hole.y;
       }
-      if (Math.hypot(s.x - hole.x, s.y - hole.y) < hole.r) s.life = -1;
     }
-    stars = stars.filter(s => s.life > 0);
+    stepItems(dt);
     stepParticles(dt);
     S.score = Math.floor(S.t) + S.bonus;
     $('score').textContent = S.score;
@@ -533,52 +545,195 @@
       particles.push({ x, y, color, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: .6 });
     }
   }
+  // Obrót monet i animacja wpadania: spirala do środka, zmniejszanie (głębia) i zanikanie w ciemności
+  function stepItems(dt) {
+    for (const s of stars) {
+      const f = s.fall ?? 0;
+      s.spin += dt * (s.kind === 'chalk' ? 0.6 : 3.4) * (1 + f * 5);
+      if (s.fall !== null) {
+        s.fall = Math.min(1, s.fall + dt * 1.6);
+        const k = Math.pow(1 - s.fall, 1.6), ang = s.fall * s.fall * 5;
+        const c = Math.cos(ang), sn = Math.sin(ang);
+        s.x = hole.x + (s.ox * c - s.oy * sn) * k;
+        s.y = hole.y + (s.ox * sn + s.oy * c) * k;
+        if (s.fall >= 1) s.life = -1;
+      }
+    }
+    stars = stars.filter(s => s.life > 0);
+    for (const p of popups) { p.y -= 34 * dt; p.life -= dt * 1.1; }
+    popups = popups.filter(p => p.life > 0);
+  }
   function stepParticles(dt) {
     for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= .92; p.vy *= .92; p.life -= dt; }
     particles = particles.filter(p => p.life > 0);
   }
 
   // ---------- Rysowanie ----------
-  function drawStar(x, y, r, rot, alpha) {
-    ctx.save(); ctx.translate(x, y); ctx.globalAlpha = alpha;
-    // cień na suknie
-    ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.ellipse(2, 3, r * .8, r * .7, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.rotate(rot);
-    ctx.beginPath();
-    for (let i = 0; i < 10; i++) {
-      const rr = i % 2 ? r * 0.46 : r, a = i * Math.PI / 5 - Math.PI / 2;
-      ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+  // ---------- Monety: tłoczone, metalowe, z ząbkowanym rantem ----------
+  const COIN_R = 12;
+  const coinSprites = {};
+  function buildCoins() {
+    for (const kind of ['gold', 'silver']) for (const side of ['front', 'back'])
+      coinSprites[kind + side] = makeCoinFace(kind, side);
+  }
+  function makeCoinFace(kind, side) {
+    const Rp = Math.round(COIN_R * DPR), S = Rp * 2;
+    // 1) mapa wysokości: obręcz, perełki, nominał / gwiazda
+    const hm = document.createElement('canvas'); hm.width = hm.height = S;
+    const h = hm.getContext('2d');
+    h.fillStyle = '#000'; h.fillRect(0, 0, S, S);
+    h.translate(Rp, Rp);
+    h.strokeStyle = '#fff'; h.lineWidth = Rp * 0.13;
+    h.beginPath(); h.arc(0, 0, Rp * 0.92, 0, Math.PI * 2); h.stroke();
+    h.fillStyle = '#aaa';
+    for (let i = 0; i < 30; i++) {
+      const a = i / 30 * Math.PI * 2;
+      h.beginPath(); h.arc(Math.cos(a) * Rp * 0.76, Math.sin(a) * Rp * 0.76, Rp * 0.04, 0, Math.PI * 2); h.fill();
     }
-    ctx.closePath();
-    const g = ctx.createLinearGradient(-r, -r, r, r);
-    g.addColorStop(0, '#fff3c4'); g.addColorStop(.45, '#f0c24e'); g.addColorStop(1, '#a8741c');
-    ctx.fillStyle = g; ctx.shadowColor = 'rgba(255,200,80,.7)'; ctx.shadowBlur = 10; ctx.fill();
-    ctx.restore();
+    h.fillStyle = '#e6e6e6';
+    if (side === 'front') {
+      const txt = kind === 'gold' ? '10' : '5';
+      h.font = `bold ${Math.round(Rp * (txt.length > 1 ? 0.92 : 1.15))}px Georgia, "Times New Roman", serif`;
+      h.textAlign = 'center'; h.textBaseline = 'middle';
+      h.fillText(txt, 0, Rp * 0.06);
+    } else {
+      h.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const r = i % 2 ? Rp * 0.22 : Rp * 0.52, a = i * Math.PI / 5 - Math.PI / 2;
+        h.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+      }
+      h.closePath(); h.fill();
+    }
+    // 2) rozmycie mapy (miękkie zbocza tłoczenia)
+    let hd = h.getImageData(0, 0, S, S).data, H0 = new Float32Array(S * S);
+    for (let i = 0; i < S * S; i++) H0[i] = hd[i * 4] / 255;
+    const blur = (src) => {
+      const a = new Float32Array(S * S), b = new Float32Array(S * S);
+      for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+        const i = y * S + x;
+        a[i] = (src[i] * 2 + src[y * S + Math.max(0, x - 1)] + src[y * S + Math.min(S - 1, x + 1)]) / 4;
+      }
+      for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+        const i = y * S + x;
+        b[i] = (a[i] * 2 + a[Math.max(0, y - 1) * S + x] + a[Math.min(S - 1, y + 1) * S + x]) / 4;
+      }
+      return b;
+    };
+    const Hm = blur(blur(H0));
+    // 3) cieniowanie metalu
+    const out = document.createElement('canvas'); out.width = out.height = S;
+    const o = out.getContext('2d'), img = o.createImageData(S, S), d = img.data;
+    const base = kind === 'gold' ? [1.0, 0.76, 0.34] : [0.84, 0.86, 0.9];
+    let lx = -0.45, ly = -0.65, lz = 0.62; const ln = Math.hypot(lx, ly, lz); lx /= ln; ly /= ln; lz /= ln;
+    const hAt = (x, y) => Hm[Math.min(S - 1, Math.max(0, y)) * S + Math.min(S - 1, Math.max(0, x))];
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const k = (y * S + x) * 4, cx = x + .5 - Rp, cy = y + .5 - Rp, dist = Math.hypot(cx, cy), r = dist / Rp;
+      if (r > 1.02) { d[k + 3] = 0; continue; }
+      let nx = -(hAt(x + 1, y) - hAt(x - 1, y)) * 3, ny = -(hAt(x, y + 1) - hAt(x, y - 1)) * 3, nz = 1;
+      if (r > 0.96) { const e = (r - 0.96) / 0.04 * 1.3; nx += cx / dist * e; ny += cy / dist * e; } // fazowana krawędź
+      const nn = Math.hypot(nx, ny, nz); nx /= nn; ny /= nn; nz /= nn;
+      const diff = Math.max(0, nx * lx + ny * ly + nz * lz);
+      const rx = 2 * nz * nx, ry = 2 * nz * ny, rz = 2 * nz * nz - 1;
+      const env = 0.2 + 0.8 * clamp01(-ry * 0.75 - rx * 0.35 + 0.25 + rz * 0.15);
+      const spec = Math.pow(Math.max(0, rx * lx + ry * ly + rz * lz), 26);
+      const hv = Hm[y * S + x];
+      const grain = 1 + Math.sin(r * Rp * 2.6) * 0.018 + (hash(x * 7 + (kind === 'gold' ? 1 : 2), y) - .5) * 0.06;
+      const recess = hv < 0.12 ? 0.9 : 1.0 + hv * 0.06;
+      for (let c = 0; c < 3; c++) {
+        const sp = kind === 'gold' ? base[c] * 0.95 + 0.08 : 0.97;
+        d[k + c] = 255 * clamp01((base[c] * (0.16 + 0.42 * diff + 0.55 * env) * grain * recess + spec * sp));
+      }
+      d[k + 3] = 255 * clamp01(Rp - dist + .5);
+    }
+    o.putImageData(img, 0, 0);
+    return out;
+  }
+
+  function drawCoin(c, s) {
+    const R = COIN_R, cs = Math.cos(s.spin), sn = Math.sin(s.spin);
+    const w = Math.max(0.05, Math.abs(cs)) * R, off = sn * R * 0.1;
+    const gold = s.kind === 'gold';
+    // rant (ząbkowany, widoczny przy obrocie)
+    c.save();
+    c.beginPath(); c.ellipse(-off, 0, w, R, 0, 0, Math.PI * 2);
+    c.rect(Math.min(-off, off), -R, Math.abs(2 * off), 2 * R);
+    const eg = c.createLinearGradient(0, -R, 0, R);
+    eg.addColorStop(0, gold ? '#fff0b8' : '#ffffff'); eg.addColorStop(.35, gold ? '#d9a53c' : '#c3c8d0');
+    eg.addColorStop(1, gold ? '#5e400c' : '#4d525a');
+    c.fillStyle = eg; c.fill();
+    c.clip();
+    c.strokeStyle = 'rgba(0,0,0,.3)'; c.lineWidth = 0.45;
+    for (let y = -R; y < R; y += 1.1) { c.beginPath(); c.moveTo(-R, y); c.lineTo(R, y); c.stroke(); }
+    c.restore();
+    // awers / rewers
+    const spr = coinSprites[(gold ? 'gold' : 'silver') + (cs >= 0 ? 'front' : 'back')];
+    c.drawImage(spr, off - w, -R, w * 2, R * 2);
+    // błysk przesuwający się po monecie przy obrocie + przyciemnienie gdy stoi bokiem
+    c.save();
+    c.beginPath(); c.ellipse(off, 0, w, R, 0, 0, Math.PI * 2); c.clip();
+    c.fillStyle = `rgba(0,0,0,${(1 - Math.abs(cs)) * 0.35})`; c.fillRect(-R * 2, -R * 2, R * 4, R * 4);
+    const gx = off - sn * w * 1.3;
+    const g = c.createLinearGradient(gx - R * .7, -R, gx + R * .7, R);
+    g.addColorStop(0, 'rgba(255,255,255,0)');
+    g.addColorStop(.5, `rgba(255,${gold ? 245 : 255},${gold ? 210 : 255},${0.55 * Math.abs(cs)})`);
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    c.globalCompositeOperation = 'lighter';
+    c.fillStyle = g; c.fillRect(-R * 2, -R * 2, R * 4, R * 4);
+    c.restore();
   }
 
   // Niebieska kostka kredy bilardowej (widok z góry, z wgłębieniem)
-  function drawChalk(x, y, rot, alpha, time) {
+  function drawChalk(c, rot) {
     const s = 11;
-    ctx.save(); ctx.translate(x, y); ctx.globalAlpha = alpha;
-    const pulse = .5 + .5 * Math.sin(time * 5);
-    const glow = ctx.createRadialGradient(0, 0, s, 0, 0, s * 2.6);
-    glow.addColorStop(0, `rgba(110,190,255,${.35 + .25 * pulse})`); glow.addColorStop(1, 'rgba(110,190,255,0)');
-    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(0, 0, s * 2.6, 0, Math.PI * 2); ctx.fill();
-    ctx.rotate(rot * .3);
-    ctx.fillStyle = 'rgba(0,0,0,.35)'; rr(ctx, -s + 2, -s + 3, s * 2, s * 2, 3); ctx.fill();
-    let g = ctx.createLinearGradient(-s, -s, s, s);
+    c.save(); c.rotate(rot * .3);
+    let g = c.createLinearGradient(-s, -s, s, s);
     g.addColorStop(0, '#5fb4f0'); g.addColorStop(.5, '#1f7fd0'); g.addColorStop(1, '#0d4f8f');
-    ctx.fillStyle = g; rr(ctx, -s, -s, s * 2, s * 2, 3); ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1; ctx.stroke();
-    g = ctx.createRadialGradient(-2, -2, 1, 0, 0, s * .62);
+    c.fillStyle = g; rr(c, -s, -s, s * 2, s * 2, 3); c.fill();
+    c.strokeStyle = 'rgba(255,255,255,.35)'; c.lineWidth = 1; c.stroke();
+    g = c.createRadialGradient(-2, -2, 1, 0, 0, s * .62);
     g.addColorStop(0, '#0b3f73'); g.addColorStop(.8, '#155f9f'); g.addColorStop(1, '#8ccaf5');
-    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, s * .62, 0, Math.PI * 2); ctx.fill();
-    for (let i = 0; i < 18; i++) { // pylący się proszek kredy
-      ctx.fillStyle = 'rgba(200,235,255,.5)';
-      ctx.fillRect(hash(i, 3) * s * 2 - s, hash(i, 8) * s * 2 - s, 1, 1);
-    }
-    ctx.restore();
+    c.fillStyle = g; c.beginPath(); c.arc(0, 0, s * .62, 0, Math.PI * 2); c.fill();
+    c.fillStyle = 'rgba(200,235,255,.5)';
+    for (let i = 0; i < 18; i++) c.fillRect(hash(i, 3) * s * 2 - s, hash(i, 8) * s * 2 - s, 1, 1);
+    c.restore();
   }
+
+  // Każdy przedmiot rysowany na osobnym płótnie, żeby przy wpadaniu dało się go przyciemnić
+  const itemCv = document.createElement('canvas'), ictx = itemCv.getContext('2d');
+  const ITEM_BOX = 40;
+  function drawItem(s, time) {
+    const f = s.fall ?? 0, falling = s.fall !== null;
+    const alpha = falling ? 1 : Math.min(1, s.life);
+    const scale = 1 - 0.78 * Math.pow(f, 1.1);
+    if (!falling) {
+      ctx.globalAlpha = alpha;
+      if (s.kind === 'chalk') {
+        const pulse = .5 + .5 * Math.sin(time * 5);
+        const glow = ctx.createRadialGradient(s.x, s.y, 11, s.x, s.y, 29);
+        glow.addColorStop(0, `rgba(110,190,255,${.35 + .25 * pulse})`); glow.addColorStop(1, 'rgba(110,190,255,0)');
+        ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(s.x, s.y, 29, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.ellipse(s.x + 2, s.y + 3, 12, 12, 0, 0, Math.PI * 2); ctx.fill();
+      } else {
+        const rx = COIN_R * Math.max(.08, Math.abs(Math.cos(s.spin))) + COIN_R * .1 * Math.abs(Math.sin(s.spin));
+        ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.ellipse(s.x + 2.5, s.y + 3.5, rx, COIN_R * .9, 0, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    const px = Math.ceil(ITEM_BOX * DPR);
+    if (itemCv.width !== px) itemCv.width = itemCv.height = px;
+    ictx.setTransform(1, 0, 0, 1, 0, 0); ictx.globalCompositeOperation = 'source-over';
+    ictx.clearRect(0, 0, px, px);
+    ictx.setTransform(DPR, 0, 0, DPR, px / 2, px / 2);
+    s.kind === 'chalk' ? drawChalk(ictx, s.spin) : drawCoin(ictx, s);
+    if (f > 0) {
+      ictx.setTransform(1, 0, 0, 1, 0, 0); ictx.globalCompositeOperation = 'source-atop';
+      ictx.fillStyle = `rgba(0,0,0,${Math.min(.95, f * 1.25)})`; ictx.fillRect(0, 0, px, px);
+    }
+    ctx.globalAlpha = alpha;
+    const sz = ITEM_BOX * scale;
+    ctx.drawImage(itemCv, s.x - sz / 2, s.y - sz / 2, sz, sz);
+    ctx.globalAlpha = 1;
+  }
+
   function rr(c, x, y, w, h, r) {
     c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r);
     c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath();
@@ -603,10 +758,18 @@
     if (S.state === 'menu') return;
 
     drawPocket(ctx, hole.x, hole.y, hole.r * (1 + Math.sin(time * 3) * 0.015), false);
-    for (const s of stars) s.kind === 'chalk' ? drawChalk(s.x, s.y, s.spin, Math.min(1, s.life), time) : drawStar(s.x, s.y, 12, s.spin, Math.min(1, s.life));
+    for (const s of stars) if (s.fall !== null) drawItem(s, time); // najpierw te wpadające (są niżej)
+    for (const s of stars) if (s.fall === null) drawItem(s, time);
     for (const p of particles) {
       ctx.globalAlpha = p.life / .6; ctx.fillStyle = p.color;
       ctx.beginPath(); ctx.arc(p.x, p.y, 2.2, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.font = 'bold 17px Georgia, serif'; ctx.textAlign = 'center'; ctx.lineWidth = 3;
+    for (const p of popups) {
+      ctx.globalAlpha = Math.min(1, p.life * 1.5);
+      ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.strokeText(p.text, p.x, p.y - 16);
+      ctx.fillStyle = p.color; ctx.fillText(p.text, p.x, p.y - 16);
     }
     ctx.globalAlpha = 1;
 

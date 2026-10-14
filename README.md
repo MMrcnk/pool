@@ -1,6 +1,6 @@
 # Kulka vs Dziura
 
-Prosta gra na iPhone'a: przechylasz telefon i toczysz metalową kulką, uciekając przed dziurą, która cię goni i z czasem przyspiesza. Wpadniesz — koniec gry. Wynik = sekundy przeżycia + 5 pkt za każdą gwiazdkę.
+Prosta gra na iPhone'a: przechylasz telefon i toczysz metalową kulką, uciekając przed dziurą, która cię goni i z czasem przyspiesza. Wpadniesz — koniec gry. Wynik = sekundy przeżycia + 5 pkt za srebrną monetę i 10 za złotą; niebieska kreda zmniejsza dziurę.
 
 ## Instalacja na iPhonie (przez GitHub Pages)
 
