@@ -15,21 +15,26 @@
 <style>
   :root { --brass: #e8c77a; --cream: #f6ecd6; }
   html, body {
-    margin: 0; height: 100%; overflow: hidden; background: #1a0c05;
+    margin: 0; height: 100%; overflow: hidden; background: #0d0603;
     touch-action: none; -webkit-user-select: none; user-select: none;
     font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     color: var(--cream);
   }
-  canvas { position: fixed; inset: 0; width: 100vw; height: 100dvh; display: block; }
-  #safe { position: fixed; top: 0; height: env(safe-area-inset-top, 0px); bottom: auto; visibility: hidden; }
+  #c { position: fixed; left: 0; top: 0; display: block; }
+  #safe { position: fixed; top: 0; height: env(safe-area-inset-top, 0px); visibility: hidden; }
+  #safeB { position: fixed; top: 0; height: env(safe-area-inset-bottom, 0px); visibility: hidden; }
   #hud {
     position: fixed; left: 0; right: 0; top: env(safe-area-inset-top, 0);
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 4px 22px; height: 30px; pointer-events: none;
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+    padding: 0 22px; height: 38px; pointer-events: none;
     font: 700 17px/1 Georgia, "Times New Roman", serif; letter-spacing: .04em;
     color: var(--brass); text-shadow: 0 1px 0 rgba(0,0,0,.8), 0 0 6px rgba(0,0,0,.6);
   }
   #hud small { font: 600 10px/1 -apple-system, system-ui, sans-serif; letter-spacing: .14em; opacity: .75; margin-right: 6px; }
+  #hud .r { text-align: right; }
+  #hud small.r { margin: 0 0 0 6px; }
+  #wallet { display: flex; align-items: center; gap: 7px; font-size: 22px; color: #ffe7a6; }
+  #coinIcon { width: 22px; height: 22px; filter: drop-shadow(0 1px 1px rgba(0,0,0,.6)); }
   .overlay {
     position: fixed; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; gap: 14px; padding: 24px;
@@ -55,14 +60,16 @@
 <body>
 <canvas id="c"></canvas>
 <div id="safe"></div>
+<div id="safeB"></div>
 <div id="hud">
-  <div><small>WYNIK</small><span id="score">0</span></div>
-  <div><small>REKORD</small><span id="best">0</span></div>
+  <div><small>PUNKTY</small><span id="score">0</span></div>
+  <div id="wallet"><canvas id="coinIcon"></canvas><span id="coins">0</span></div>
+  <div class="r"><span id="best">0</span><small class="r">REKORD</small></div>
 </div>
 
 <div id="start" class="overlay">
   <h1>Kulka<br><span>kontra</span><br>Dziura</h1>
-  <p>Przechylaj telefon, żeby toczyć stalową kulkę po stole. Uciekaj przed wędrującą łuzą — z każdą sekundą goni szybciej. Dziura powoli rośnie — zbieraj niebieską kredę, żeby ją zmniejszyć. Monety: srebrna +5, złota +10.</p>
+  <p>Przechylaj telefon, żeby toczyć stalową kulkę po stole. Uciekaj przed wędrującą łuzą — z każdą sekundą goni szybciej. Dziura powoli rośnie — zbieraj niebieską kredę, żeby ją zmniejszyć. Monety (srebrna 5, złota 10) trafiają na twoje konto.</p>
   <button id="play">Graj</button>
   <p class="hint">Trzymaj telefon tak, jak lubisz — ta pozycja zostanie ustawiona jako „poziom”.</p>
   <p id="err"></p>
@@ -72,6 +79,7 @@
   <h1>Wpadłeś!</h1>
   <div class="big" id="final">0</div>
   <p id="overMsg"></p>
+  <p id="overCoins"></p>
   <button id="again">Jeszcze raz</button>
 </div>
 
@@ -110,16 +118,24 @@
     return Math.min(l, 1.15);
   }
 
+  // Pełny ekran także w trybie aplikacji na iPhonie (innerHeight bywa krótszy o pasek statusu)
+  function screenSize() {
+    let w = window.innerWidth, h = Math.max(window.innerHeight, document.documentElement.clientHeight);
+    if (navigator.standalone && w < h) h = Math.max(h, screen.height);
+    return [w, h];
+  }
+  let SAFE_T = 0;
   function resize() {
     DPR = Math.min(window.devicePixelRatio || 1, 3);
-    W = window.innerWidth; H = window.innerHeight;
+    [W, H] = screenSize();
     cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+    cv.style.width = W + 'px'; cv.style.height = H + 'px';
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    const safeTop = $('safe').getBoundingClientRect().height || 0;
+    SAFE_T = $('safe').getBoundingClientRect().height || 0;
     const unit = Math.min(W, H);
     RAIL = Math.max(26, unit * 0.075);
-    RAIL_T = RAIL + safeTop + 10;  // miejsce na wynik nad stołem
-    RAIL_B = RAIL + 6;
+    // górna i dolna rama tej samej grubości (stół wyśrodkowany); u góry mieści się pasek z wynikami
+    RAIL_T = RAIL_B = RAIL + SAFE_T + 38;
     CUSH = RAIL * 0.42;
     F.x0 = RAIL + CUSH; F.x1 = W - RAIL - CUSH;
     F.y0 = RAIL_T + CUSH; F.y1 = H - RAIL_B - CUSH;
@@ -128,6 +144,7 @@
     lamps = [-1, 0, 1].map(k => ({ x: W / 2, y: cy + k * sp }));
     buildTable();
     buildCoins();
+    drawCoinIcon();
     if (S.state !== 'menu') clampToTable();
   }
 
@@ -169,7 +186,7 @@
           let along, acrossPx, thick, seed;
           if (m === dl || m === dr) { along = y; acrossPx = m === dl ? x : W - x; thick = RAIL; seed = m === dl ? 3 : 7; }
           else { along = x; acrossPx = m === dt ? y : H - y; thick = m === dt ? RAIL_T : RAIL_B; seed = m === dt ? 11 : 17; }
-          const a = acrossPx / thick; // 0 = zewnętrzna krawędź, 1 = przy bandzie
+          const a = clamp01((acrossPx - (thick - RAIL)) / RAIL); // 0 = zewnętrzna krawędź, 1 = przy bandzie
           const wav = noise(along * .012 + seed, acrossPx * .05) * 5;
           const stripe = Math.sin(acrossPx * .5 + wav);
           const fib = noise(along * .03 + seed * 3, acrossPx * 1.1) - .5;
@@ -183,7 +200,7 @@
           if (seed >= 10) along01 = .55 * Math.exp(-Math.pow((x - W / 2) / (W * .28), 2));
           const spec = Math.exp(-Math.pow((a - .4) / .09, 2)) * along01 * 120
                      + Math.exp(-Math.pow((a - .4) / .3, 2)) * 18;
-          const lip = a < .04 ? .5 : a > .96 ? .45 : 1;
+          const lip = a > .96 ? .45 : (thick === RAIL && a < .04) ? .5 : 1;
           r = r * prof * lip + spec; g = g * prof * lip + spec * .85; b = b * prof * lip + spec * .65;
         }
         const i = (py * pw + px) * 4;
@@ -205,13 +222,21 @@
     };
     const fw = F.x1 - F.x0, fh = F.y1 - F.y0;
     for (const k of [1, 2, 3]) {
-      dia(F.x0 + fw * k / 4, RAIL_T * .55 + (RAIL_T - RAIL) * .2);
-      dia(F.x0 + fw * k / 4, H - RAIL_B * .5);
+      dia(F.x0 + fw * k / 4, RAIL_T - RAIL * .5);
+      dia(F.x0 + fw * k / 4, H - RAIL_B + RAIL * .5);
     }
     for (const k of [1, 2, 3, 4, 5, 6, 7]) {
       dia(RAIL * .5, F.y0 + fh * k / 8);
       dia(W - RAIL * .5, F.y0 + fh * k / 8);
     }
+    // Stół łagodnie rozpływa się w ciemność u góry i u dołu ekranu
+    const fadeH = Math.max(SAFE_T, 24) + 30;
+    let fg = t.createLinearGradient(0, 0, 0, fadeH);
+    fg.addColorStop(0, 'rgba(13,6,3,1)'); fg.addColorStop(.45, 'rgba(13,6,3,.6)'); fg.addColorStop(1, 'rgba(13,6,3,0)');
+    t.fillStyle = fg; t.fillRect(0, 0, W, fadeH);
+    fg = t.createLinearGradient(0, H, 0, H - fadeH);
+    fg.addColorStop(0, 'rgba(13,6,3,1)'); fg.addColorStop(.45, 'rgba(13,6,3,.6)'); fg.addColorStop(1, 'rgba(13,6,3,0)');
+    t.fillStyle = fg; t.fillRect(0, H - fadeH, W, fadeH);
     // Punkt środkowy na suknie
     t.fillStyle = 'rgba(255,255,255,.18)';
     t.beginPath(); t.arc(W / 2, F.y0 + fh * .75, 2.2, 0, Math.PI * 2); t.fill();
@@ -423,7 +448,9 @@
   const hole = { x: -999, y: -999, vx: 0, vy: 0, r: 30 };
   let stars = [], particles = [], popups = [], starTimer = 0, chalkTimer = 0, holeBase = 0;
   let best = 0;
-  try { best = +localStorage.getItem('kulka-best') || 0; } catch {}
+  let wallet = 0;
+  try { best = +localStorage.getItem('kulka-best') || 0; wallet = +localStorage.getItem('kulka-coins') || 0; } catch {}
+  $('coins').textContent = wallet;
   $('best').textContent = best;
 
   function clampToTable() {
@@ -437,7 +464,7 @@
     hole.r = hole.rt = holeBase = ball.r * 1.7;
     ball.x = W / 2; ball.y = F.y0 + (F.y1 - F.y0) * 0.78; ball.vx = ball.vy = 0; ball.fall = 0;
     hole.x = W / 2; hole.y = F.y0 + (F.y1 - F.y0) * 0.15; hole.vx = hole.vy = 0;
-    S.t = 0; S.score = 0; S.bonus = 0; stars = []; particles = []; popups = [];
+    S.t = 0; S.score = 0; S.coins = 0; stars = []; particles = []; popups = [];
     starTimer = 1.5; chalkTimer = 9;
   }
   function spawnStar(kind = Math.random() < .3 ? 'gold' : 'silver') {
@@ -456,7 +483,7 @@
   function frame(now) {
     const dt = Math.min(0.033, (now - last) / 1000);
     last = now;
-    if (innerWidth !== W || innerHeight !== H) resize();
+    { const [w, h] = screenSize(); if (w !== W || h !== H) resize(); }
     if (S.state === 'play' || S.state === 'falling') update(dt);
     draw(now / 1000);
     requestAnimationFrame(frame);
@@ -525,7 +552,9 @@
           popups.push({ x: s.x, y: s.y, text: 'mniejsza!', color: '#9fd8ff', life: 1 });
         } else {
           const pts = s.kind === 'gold' ? 10 : 5, col = s.kind === 'gold' ? '#ffd76a' : '#eef3f8';
-          S.bonus += pts; burst(s.x, s.y, col);
+          S.coins += pts; wallet += pts; burst(s.x, s.y, col);
+          try { localStorage.setItem('kulka-coins', wallet); } catch {}
+          $('coins').textContent = wallet;
           popups.push({ x: s.x, y: s.y, text: '+' + pts, color: col, life: 1 });
         }
       } else if (Math.hypot(s.x - hole.x, s.y - hole.y) < hole.r + 6) {
@@ -535,7 +564,7 @@
     }
     stepItems(dt);
     stepParticles(dt);
-    S.score = Math.floor(S.t) + S.bonus;
+    S.score = Math.floor(S.t);
     $('score').textContent = S.score;
   }
 
@@ -570,7 +599,8 @@
 
   // ---------- Rysowanie ----------
   // ---------- Monety: tłoczone, metalowe, z ząbkowanym rantem ----------
-  const COIN_R = 12;
+  const COIN_R = 13;
+  const COIN_TILT = 0.72; // moneta widziana pod kątem ~45°
   const coinSprites = {};
   function buildCoins() {
     for (const kind of ['gold', 'silver']) for (const side of ['front', 'back'])
@@ -590,19 +620,18 @@
       const a = i / 30 * Math.PI * 2;
       h.beginPath(); h.arc(Math.cos(a) * Rp * 0.76, Math.sin(a) * Rp * 0.76, Rp * 0.04, 0, Math.PI * 2); h.fill();
     }
-    h.fillStyle = '#e6e6e6';
     if (side === 'front') {
+      // nominał wyśrodkowany wg rzeczywistego obrysu cyfr
       const txt = kind === 'gold' ? '10' : '5';
-      h.font = `bold ${Math.round(Rp * (txt.length > 1 ? 0.92 : 1.15))}px Georgia, "Times New Roman", serif`;
-      h.textAlign = 'center'; h.textBaseline = 'middle';
-      h.fillText(txt, 0, Rp * 0.06);
+      h.fillStyle = '#e6e6e6';
+      h.font = `bold ${Math.round(Rp * (txt.length > 1 ? 0.9 : 1.1))}px "Times New Roman", Times, serif`;
+      h.textAlign = 'left'; h.textBaseline = 'alphabetic';
+      const m = h.measureText(txt);
+      const tx = (m.actualBoundingBoxLeft - m.actualBoundingBoxRight) / 2;
+      const ty = (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2;
+      h.fillText(txt, tx, ty);
     } else {
-      h.beginPath();
-      for (let i = 0; i < 10; i++) {
-        const r = i % 2 ? Rp * 0.22 : Rp * 0.52, a = i * Math.PI / 5 - Math.PI / 2;
-        h.lineTo(Math.cos(a) * r, Math.sin(a) * r);
-      }
-      h.closePath(); h.fill();
+      drawWashington(h, Rp);
     }
     // 2) rozmycie mapy (miękkie zbocza tłoczenia)
     let hd = h.getImageData(0, 0, S, S).data, H0 = new Float32Array(S * S);
@@ -649,37 +678,84 @@
     return out;
   }
 
+  // Delikatny profil Waszyngtona (w lewo, z peruką i harcapem) jako mapa wysokości
+  function drawWashington(h, Rp) {
+    h.save(); h.scale(Rp * 0.66, Rp * 0.66); h.translate(0.02, 0.02);
+    h.fillStyle = '#7a7a7a';
+    h.beginPath();
+    h.moveTo(0.30, -0.78);
+    h.bezierCurveTo(0.02, -0.88, -0.26, -0.76, -0.34, -0.50);   // ciemię → czoło
+    h.bezierCurveTo(-0.38, -0.38, -0.37, -0.30, -0.40, -0.22);  // czoło
+    h.lineTo(-0.53, -0.04);                                     // nos
+    h.lineTo(-0.41, -0.01);
+    h.bezierCurveTo(-0.44, 0.04, -0.40, 0.07, -0.44, 0.11);     // usta
+    h.bezierCurveTo(-0.41, 0.17, -0.43, 0.22, -0.37, 0.28);     // podbródek
+    h.bezierCurveTo(-0.28, 0.33, -0.19, 0.33, -0.13, 0.34);     // żuchwa
+    h.bezierCurveTo(-0.13, 0.46, -0.17, 0.56, -0.22, 0.66);     // szyja
+    h.bezierCurveTo(0.00, 0.74, 0.30, 0.74, 0.50, 0.64);        // ucięcie popiersia
+    h.bezierCurveTo(0.46, 0.48, 0.50, 0.36, 0.60, 0.27);        // kark
+    h.bezierCurveTo(0.80, 0.33, 0.84, 0.18, 0.72, 0.10);        // kokarda harcapu
+    h.bezierCurveTo(0.64, -0.12, 0.64, -0.48, 0.30, -0.78);     // tył głowy
+    h.closePath(); h.fill();
+    h.lineCap = 'round';
+    h.strokeStyle = '#a8a8a8'; h.lineWidth = 0.07;                // loki peruki nad uchem
+    for (const [x, y] of [[0.22, -0.02], [0.32, 0.14], [0.42, -0.2]]) {
+      h.beginPath(); h.arc(x, y, 0.08, 0.3, Math.PI * 1.7); h.stroke();
+    }
+    h.fillStyle = '#9a9a9a';                                      // ucho
+    h.beginPath(); h.ellipse(0.08, -0.06, 0.07, 0.11, 0, 0, Math.PI * 2); h.fill();
+    h.strokeStyle = '#4a4a4a'; h.lineWidth = 0.035;               // oko i brew
+    h.beginPath(); h.moveTo(-0.30, -0.19); h.lineTo(-0.22, -0.18); h.stroke();
+    h.beginPath(); h.moveTo(-0.33, -0.27); h.quadraticCurveTo(-0.25, -0.31, -0.18, -0.26); h.stroke();
+    h.strokeStyle = '#999'; h.lineWidth = 0.04;                   // linia peruki nad czołem
+    h.beginPath(); h.moveTo(-0.28, -0.52); h.bezierCurveTo(-0.05, -0.45, 0.15, -0.5, 0.35, -0.62); h.stroke();
+    h.restore();
+  }
+
   function drawCoin(c, s) {
     const R = COIN_R, cs = Math.cos(s.spin), sn = Math.sin(s.spin);
-    const w = Math.max(0.05, Math.abs(cs)) * R, off = sn * R * 0.1;
+    const w = Math.max(0.05, Math.abs(cs)) * R, hR = R * COIN_TILT;
     const gold = s.kind === 'gold';
-    // rant (ząbkowany, widoczny przy obrocie)
+    // grubość monety: przód i tył przesunięte (obrót + patrzenie z góry pod kątem)
+    const T = R * 0.17, ex = sn * T, ey = T * 0.7;
+    const fx = ex / 2, fy = -ey / 2, bx = -ex / 2, by = ey / 2;
+    // rant: ułożony z kolejnych przekrojów, z ząbkowaniem wzdłuż grubości
     c.save();
-    c.beginPath(); c.ellipse(-off, 0, w, R, 0, 0, Math.PI * 2);
-    c.rect(Math.min(-off, off), -R, Math.abs(2 * off), 2 * R);
-    const eg = c.createLinearGradient(0, -R, 0, R);
-    eg.addColorStop(0, gold ? '#fff0b8' : '#ffffff'); eg.addColorStop(.35, gold ? '#d9a53c' : '#c3c8d0');
-    eg.addColorStop(1, gold ? '#5e400c' : '#4d525a');
-    c.fillStyle = eg; c.fill();
-    c.clip();
-    c.strokeStyle = 'rgba(0,0,0,.3)'; c.lineWidth = 0.45;
-    for (let y = -R; y < R; y += 1.1) { c.beginPath(); c.moveTo(-R, y); c.lineTo(R, y); c.stroke(); }
+    c.beginPath();
+    for (let i = 0; i <= 6; i++) { const t = i / 6; c.ellipse(bx + (fx - bx) * t, by + (fy - by) * t, w, hR, 0, 0, Math.PI * 2); }
+    const eg = c.createLinearGradient(0, -hR, 0, hR + ey);
+    eg.addColorStop(0, gold ? '#ffe9a8' : '#f4f6fa'); eg.addColorStop(.45, gold ? '#c9932e' : '#aab0b9');
+    eg.addColorStop(1, gold ? '#4f350a' : '#3e434a');
+    c.fillStyle = eg; c.fill('nonzero');
+    c.clip('nonzero');
+    c.rotate(Math.atan2(ey, ex));
+    c.strokeStyle = 'rgba(0,0,0,.28)'; c.lineWidth = 0.45;
+    for (let y = -R * 2; y < R * 2; y += 1.1) { c.beginPath(); c.moveTo(-R * 2, y); c.lineTo(R * 2, y); c.stroke(); }
     c.restore();
-    // awers / rewers
+    // awers (nominał) / rewers (Waszyngton)
     const spr = coinSprites[(gold ? 'gold' : 'silver') + (cs >= 0 ? 'front' : 'back')];
-    c.drawImage(spr, off - w, -R, w * 2, R * 2);
-    // błysk przesuwający się po monecie przy obrocie + przyciemnienie gdy stoi bokiem
+    c.drawImage(spr, fx - w, fy - hR, w * 2, hR * 2);
+    // przyciemnienie przy ustawieniu bokiem + błysk przesuwający się przy obrocie
     c.save();
-    c.beginPath(); c.ellipse(off, 0, w, R, 0, 0, Math.PI * 2); c.clip();
+    c.beginPath(); c.ellipse(fx, fy, w, hR, 0, 0, Math.PI * 2); c.clip();
     c.fillStyle = `rgba(0,0,0,${(1 - Math.abs(cs)) * 0.35})`; c.fillRect(-R * 2, -R * 2, R * 4, R * 4);
-    const gx = off - sn * w * 1.3;
-    const g = c.createLinearGradient(gx - R * .7, -R, gx + R * .7, R);
+    const gx = fx - sn * w * 1.3;
+    const g = c.createLinearGradient(gx - R * .7, -hR, gx + R * .7, hR);
     g.addColorStop(0, 'rgba(255,255,255,0)');
-    g.addColorStop(.5, `rgba(255,${gold ? 245 : 255},${gold ? 210 : 255},${0.55 * Math.abs(cs)})`);
+    g.addColorStop(.5, `rgba(255,${gold ? 245 : 255},${gold ? 210 : 255},${0.5 * Math.abs(cs)})`);
     g.addColorStop(1, 'rgba(255,255,255,0)');
     c.globalCompositeOperation = 'lighter';
     c.fillStyle = g; c.fillRect(-R * 2, -R * 2, R * 4, R * 4);
     c.restore();
+  }
+
+  // Ikona monety w pasku u góry
+  function drawCoinIcon() {
+    const ic = $('coinIcon'), px = Math.round(22 * DPR);
+    ic.width = ic.height = px;
+    const c = ic.getContext('2d');
+    c.setTransform(DPR * 22 / (COIN_R * 2.3), 0, 0, DPR * 22 / (COIN_R * 2.3), px / 2, px / 2);
+    drawCoin(c, { kind: 'gold', spin: 0.35 });
   }
 
   // Niebieska kostka kredy bilardowej (widok z góry, z wgłębieniem)
@@ -714,8 +790,10 @@
         ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(s.x, s.y, 29, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.ellipse(s.x + 2, s.y + 3, 12, 12, 0, 0, Math.PI * 2); ctx.fill();
       } else {
-        const rx = COIN_R * Math.max(.08, Math.abs(Math.cos(s.spin))) + COIN_R * .1 * Math.abs(Math.sin(s.spin));
-        ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.ellipse(s.x + 2.5, s.y + 3.5, rx, COIN_R * .9, 0, 0, Math.PI * 2); ctx.fill();
+        const rx = COIN_R * Math.max(.1, Math.abs(Math.cos(s.spin))) + COIN_R * .17 * Math.abs(Math.sin(s.spin));
+        const sg = ctx.createRadialGradient(s.x + 2, s.y + COIN_R * .75, 0, s.x + 2, s.y + COIN_R * .75, rx * 1.1);
+        sg.addColorStop(0, 'rgba(0,0,0,.45)'); sg.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = sg; ctx.beginPath(); ctx.ellipse(s.x + 2, s.y + COIN_R * .75, rx * 1.1, COIN_R * .35, 0, 0, Math.PI * 2); ctx.fill();
       }
     }
     const px = Math.ceil(ITEM_BOX * DPR);
@@ -765,10 +843,9 @@
       ctx.beginPath(); ctx.arc(p.x, p.y, 2.2, 0, Math.PI * 2); ctx.fill();
     }
     ctx.globalAlpha = 1;
-    ctx.font = 'bold 17px Georgia, serif'; ctx.textAlign = 'center'; ctx.lineWidth = 3;
+    ctx.font = 'italic 600 19px "Times New Roman", Times, serif'; ctx.textAlign = 'center';
     for (const p of popups) {
       ctx.globalAlpha = Math.min(1, p.life * 1.5);
-      ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.strokeText(p.text, p.x, p.y - 16);
       ctx.fillStyle = p.color; ctx.fillText(p.text, p.x, p.y - 16);
     }
     ctx.globalAlpha = 1;
@@ -804,6 +881,7 @@
     $('best').textContent = best;
     $('final').textContent = S.score;
     $('overMsg').textContent = newBest ? 'Nowy rekord! 🏆' : `Rekord: ${best}`;
+    $('overCoins').textContent = S.coins ? `Zebrane monety: +${S.coins} (konto: ${wallet})` : `Konto: ${wallet}`;
     $('over').classList.remove('hidden');
   }
 
