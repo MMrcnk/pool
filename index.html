@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Kulka">
+<meta name="theme-color" content="#2a1408">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<title>Kulka vs Dziura</title>
+<style>
+  :root { --brass: #e8c77a; --cream: #f6ecd6; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #1a0c05;
+    touch-action: none; -webkit-user-select: none; user-select: none;
+    font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    color: var(--cream);
+  }
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100dvh; display: block; }
+  #safe { position: fixed; top: 0; height: env(safe-area-inset-top, 0px); bottom: auto; visibility: hidden; }
+  #hud {
+    position: fixed; left: 0; right: 0; top: env(safe-area-inset-top, 0);
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 4px 22px; height: 30px; pointer-events: none;
+    font: 700 17px/1 Georgia, "Times New Roman", serif; letter-spacing: .04em;
+    color: var(--brass); text-shadow: 0 1px 0 rgba(0,0,0,.8), 0 0 6px rgba(0,0,0,.6);
+  }
+  #hud small { font: 600 10px/1 -apple-system, system-ui, sans-serif; letter-spacing: .14em; opacity: .75; margin-right: 6px; }
+  .overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px; padding: 24px;
+    text-align: center; background: radial-gradient(ellipse at center, rgba(10,25,15,.55), rgba(5,8,5,.85));
+    -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  }
+  .overlay.hidden { display: none; }
+  h1 { margin: 0; font: 700 44px/1.02 Georgia, "Times New Roman", serif; text-shadow: 0 3px 12px rgba(0,0,0,.6); }
+  h1 span { font-style: italic; color: var(--brass); font-size: .7em; }
+  p { margin: 0; max-width: 300px; line-height: 1.45; opacity: .88; }
+  .big { font: 700 64px/1 Georgia, serif; color: var(--brass); }
+  button {
+    margin-top: 12px; font: 700 19px/1 Georgia, serif; letter-spacing: .06em;
+    padding: 17px 44px; border: 0; border-radius: 999px; color: #2a1606;
+    background: linear-gradient(#fbe7ae, #e2b55a 55%, #b9862f);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.7), 0 5px 0 #7a5418, 0 12px 24px rgba(0,0,0,.5);
+  }
+  button:active { transform: translateY(4px); box-shadow: inset 0 1px 0 rgba(255,255,255,.7), 0 1px 0 #7a5418; }
+  .hint { font-size: 13px; opacity: .6; }
+  #err { color: #ff9a8a; font-size: 14px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="safe"></div>
+<div id="hud">
+  <div><small>WYNIK</small><span id="score">0</span></div>
+  <div><small>REKORD</small><span id="best">0</span></div>
+</div>
+
+<div id="start" class="overlay">
+  <h1>Kulka<br><span>kontra</span><br>Dziura</h1>
+  <p>Przechylaj telefon, żeby toczyć stalową kulkę po stole. Uciekaj przed wędrującą łuzą — z każdą sekundą goni szybciej. Dziura powoli rośnie — zbieraj niebieską kredę, żeby ją zmniejszyć. Gwiazdki dają punkty.</p>
+  <button id="play">Graj</button>
+  <p class="hint">Trzymaj telefon tak, jak lubisz — ta pozycja zostanie ustawiona jako „poziom”.</p>
+  <p id="err"></p>
+</div>
+
+<div id="over" class="overlay hidden">
+  <h1>Wpadłeś!</h1>
+  <div class="big" id="final">0</div>
+  <p id="overMsg"></p>
+  <button id="again">Jeszcze raz</button>
+</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  const $ = id => document.getElementById(id);
+  let W = 0, H = 0, DPR = 1;
+  const F = { x0: 0, y0: 0, x1: 0, y1: 0 };   // prostokąt sukna (pole gry)
+  let RAIL = 0, RAIL_T = 0, RAIL_B = 0, CUSH = 0;
+  let lamps = [], LAMP_H = 0;
+
+  // ---------- Szum ----------
+  function hash(x, y) {
+    let h = Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+  }
+  function noise(x, y) {
+    const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+    const a = hash(xi, yi), b = hash(xi + 1, yi), c = hash(xi, yi + 1), d = hash(xi + 1, yi + 1);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+  }
+  const lin = c => Math.pow(c / 255, 2.2);
+  const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
+
+  // Natężenie światła lamp nad stołem w punkcie (x, y)
+  function lampLight(x, y) {
+    let l = 0.28;
+    for (const L of lamps) {
+      const dx = (x - L.x) / (W * 0.55), dy = (y - L.y) / (H * 0.2);
+      l += 0.62 * Math.exp(-(dx * dx + dy * dy));
+    }
+    return Math.min(l, 1.15);
+  }
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 3);
+    W = window.innerWidth; H = window.innerHeight;
+    cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    const safeTop = $('safe').getBoundingClientRect().height || 0;
+    const unit = Math.min(W, H);
+    RAIL = Math.max(26, unit * 0.075);
+    RAIL_T = RAIL + safeTop + 10;  // miejsce na wynik nad stołem
+    RAIL_B = RAIL + 6;
+    CUSH = RAIL * 0.42;
+    F.x0 = RAIL + CUSH; F.x1 = W - RAIL - CUSH;
+    F.y0 = RAIL_T + CUSH; F.y1 = H - RAIL_B - CUSH;
+    LAMP_H = H * 0.45;
+    const cy = (F.y0 + F.y1) / 2, sp = (F.y1 - F.y0) * 0.3;
+    lamps = [-1, 0, 1].map(k => ({ x: W / 2, y: cy + k * sp }));
+    buildTable();
+    if (S.state !== 'menu') clampToTable();
+  }
+
+  // ---------- Stół: sukno, bandy, drewno (renderowane raz, per piksel) ----------
+  let table;
+  function buildTable() {
+    const pw = Math.round(W * DPR), ph = Math.round(H * DPR);
+    table = document.createElement('canvas');
+    table.width = pw; table.height = ph;
+    const t = table.getContext('2d');
+    const img = t.createImageData(pw, ph), d = img.data;
+    const feltR = 22, feltG = 112, feltB = 58;
+    for (let py = 0; py < ph; py++) {
+      const y = (py + .5) / DPR;
+      for (let px = 0; px < pw; px++) {
+        const x = (px + .5) / DPR;
+        let r, g, b;
+        const ox = Math.max(F.x0 - x, 0, x - F.x1), oy = Math.max(F.y0 - y, 0, y - F.y1);
+        const out = Math.max(ox, oy);
+        const light = lampLight(x, y);
+        if (out === 0) {
+          // Sukno: włókno + delikatne kłaczki + cień przy bandach
+          const edge = Math.min(x - F.x0, F.x1 - x, y - F.y0, F.y1 - y);
+          const sh = 1 - 0.45 * Math.exp(-edge / (CUSH * 0.55));
+          const n = (hash(px, py) - .5) * 0.07 + (noise(x * .35, y * .35) - .5) * 0.05
+                  + (noise(x * .04 + 9, y * .04) - .5) * 0.06;
+          const k = light * sh * (1 + n);
+          r = feltR * k; g = feltG * k; b = feltB * k;
+        } else if (out <= CUSH) {
+          // Banda (gumowa poduszka obita suknem) — skos oświetlony od góry
+          const a = out / CUSH;
+          const k = light * (0.55 + 0.55 * Math.pow(a, .8)) * (1 + (hash(px, py) - .5) * .06)
+                  * (a > .93 ? .55 : 1);
+          r = feltR * k * .9; g = feltG * k * .9; b = feltB * k * .9;
+        } else {
+          // Drewniana rama z mahoniu
+          const dl = x / RAIL, dr = (W - x) / RAIL, dt = y / RAIL_T, db = (H - y) / RAIL_B;
+          const m = Math.min(dl, dr, dt, db);
+          let along, acrossPx, thick, seed;
+          if (m === dl || m === dr) { along = y; acrossPx = m === dl ? x : W - x; thick = RAIL; seed = m === dl ? 3 : 7; }
+          else { along = x; acrossPx = m === dt ? y : H - y; thick = m === dt ? RAIL_T : RAIL_B; seed = m === dt ? 11 : 17; }
+          const a = acrossPx / thick; // 0 = zewnętrzna krawędź, 1 = przy bandzie
+          const wav = noise(along * .012 + seed, acrossPx * .05) * 5;
+          const stripe = Math.sin(acrossPx * .5 + wav);
+          const fib = noise(along * .03 + seed * 3, acrossPx * 1.1) - .5;
+          const pore = (hash(px * 3 + seed, py) - .5) * .08;
+          const f = clamp01(.5 + stripe * .28 + fib * .5 + pore);
+          r = 62 + (132 - 62) * f; g = 24 + (60 - 24) * f; b = 10 + (26 - 10) * f;
+          // zaokrąglony profil + lakier
+          const prof = 0.6 + 0.5 * Math.sin(Math.PI * Math.min(1, a * 1.05));
+          let along01 = 0;
+          for (const L of lamps) along01 += Math.exp(-Math.pow((y - L.y) / (H * .1), 2)) * (seed < 10 ? 1 : 0);
+          if (seed >= 10) along01 = .55 * Math.exp(-Math.pow((x - W / 2) / (W * .28), 2));
+          const spec = Math.exp(-Math.pow((a - .4) / .09, 2)) * along01 * 120
+                     + Math.exp(-Math.pow((a - .4) / .3, 2)) * 18;
+          const lip = a < .04 ? .5 : a > .96 ? .45 : 1;
+          r = r * prof * lip + spec; g = g * prof * lip + spec * .85; b = b * prof * lip + spec * .65;
+        }
+        const i = (py * pw + px) * 4;
+        d[i] = r; d[i + 1] = g; d[i + 2] = b; d[i + 3] = 255;
+      }
+    }
+    t.putImageData(img, 0, 0);
+    t.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+    // Perłowe diamenty na ramie
+    const dia = (x, y) => {
+      const s = Math.max(3, RAIL * .13);
+      t.save(); t.translate(x, y);
+      const g = t.createLinearGradient(-s, -s, s, s);
+      g.addColorStop(0, '#fffaf0'); g.addColorStop(.5, '#d9d2c4'); g.addColorStop(1, '#a89f90');
+      t.fillStyle = g; t.shadowColor = 'rgba(0,0,0,.5)'; t.shadowBlur = 2; t.shadowOffsetY = 1;
+      t.beginPath(); t.moveTo(0, -s); t.lineTo(s * .6, 0); t.lineTo(0, s); t.lineTo(-s * .6, 0); t.closePath(); t.fill();
+      t.restore();
+    };
+    const fw = F.x1 - F.x0, fh = F.y1 - F.y0;
+    for (const k of [1, 2, 3]) {
+      dia(F.x0 + fw * k / 4, RAIL_T * .55 + (RAIL_T - RAIL) * .2);
+      dia(F.x0 + fw * k / 4, H - RAIL_B * .5);
+    }
+    for (const k of [1, 2, 3, 4, 5, 6, 7]) {
+      dia(RAIL * .5, F.y0 + fh * k / 8);
+      dia(W - RAIL * .5, F.y0 + fh * k / 8);
+    }
+    // Punkt środkowy na suknie
+    t.fillStyle = 'rgba(255,255,255,.18)';
+    t.beginPath(); t.arc(W / 2, F.y0 + fh * .75, 2.2, 0, Math.PI * 2); t.fill();
+  }
+
+  // Łuza / dziura: czarna głębia, brzeg sukna zawijający się do środka
+  function drawPocket(c, x, y, r, fixed) {
+    c.save();
+    // zagłębienie wokół krawędzi
+    let g = c.createRadialGradient(x, y, r * .9, x, y, r * 1.45);
+    g.addColorStop(0, 'rgba(0,0,0,.55)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    c.fillStyle = g; c.beginPath(); c.arc(x, y, r * 1.45, 0, Math.PI * 2); c.fill();
+    if (fixed) {
+      // skórzana obręcz łuzy stołowej
+      g = c.createRadialGradient(x - r * .3, y - r * .3, r * .2, x, y, r * 1.15);
+      g.addColorStop(0, '#3a2414'); g.addColorStop(.7, '#1d110a'); g.addColorStop(1, '#0d0704');
+      c.fillStyle = g; c.beginPath(); c.arc(x, y, r * 1.12, 0, Math.PI * 2); c.fill();
+    }
+    // wnętrze: ścianka oświetlona po przeciwnej stronie
+    g = c.createRadialGradient(x + r * .22, y + r * .28, r * .1, x, y, r);
+    g.addColorStop(0, '#000'); g.addColorStop(.62, '#020302'); g.addColorStop(.88, fixed ? '#0a0704' : '#06160c');
+    g.addColorStop(1, fixed ? '#24170e' : '#0f3a20');
+    c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+    // jasna krawędź sukna łapiąca światło
+    c.lineWidth = Math.max(1, r * .06);
+    g = c.createLinearGradient(x - r, y - r, x + r, y + r);
+    g.addColorStop(0, 'rgba(0,0,0,.6)'); g.addColorStop(.55, 'rgba(0,0,0,0)');
+    g.addColorStop(1, fixed ? 'rgba(160,110,70,.35)' : 'rgba(120,220,150,.35)');
+    c.strokeStyle = g; c.beginPath(); c.arc(x, y, r - c.lineWidth / 2, 0, Math.PI * 2); c.stroke();
+    c.restore();
+  }
+
+  // ---------- Chromowana kulka: ray-tracing odbić otoczenia per piksel ----------
+  const ballCv = document.createElement('canvas');
+  const bctx = ballCv.getContext('2d');
+  let ballImg = null;
+  const FELT_LIN = [lin(22), lin(112), lin(58)];
+  const WOOD_LIN = [lin(105), lin(46), lin(20)];
+  // Okno w pokoju (daleko, więc zależy tylko od kierunku)
+  const WIN = (() => { const az = Math.atan2(-0.85, -0.55); return { az, el0: 0.22, el1: 0.62, w: 0.42 }; })();
+  // Rotacja kulki (ślady/mikrorysy toczą się razem z nią)
+  let rot = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  const marks = Array.from({ length: 26 }, (_, i) => {
+    const z = hash(i, 91) * 2 - 1, a = hash(i, 17) * Math.PI * 2, s = Math.sqrt(1 - z * z);
+    return [Math.cos(a) * s, Math.sin(a) * s, z, 0.04 + hash(i, 5) * 0.07];
+  });
+
+  function rollBall(dx, dy, r) {
+    const dist = Math.hypot(dx, dy);
+    if (dist < 1e-6) return;
+    const ang = dist / r, ax = -dy / dist, ay = dx / dist; // oś = z × v
+    const c = Math.cos(ang), s = Math.sin(ang), C = 1 - c;
+    const R = [c + ax * ax * C, ax * ay * C, ay * s,
+               ay * ax * C, c + ay * ay * C, -ax * s,
+               -ay * s, ax * s, c];
+    const m = rot, o = new Array(9);
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++)
+      o[i * 3 + j] = R[i * 3] * m[j] + R[i * 3 + 1] * m[3 + j] + R[i * 3 + 2] * m[6 + j];
+    // ortonormalizacja (Gram–Schmidt), żeby błędy się nie kumulowały
+    let [a0, a1, a2, b0, b1, b2] = o;
+    let n = Math.hypot(a0, a1, a2); a0 /= n; a1 /= n; a2 /= n;
+    const dp = a0 * b0 + a1 * b1 + a2 * b2; b0 -= dp * a0; b1 -= dp * a1; b2 -= dp * a2;
+    n = Math.hypot(b0, b1, b2); b0 /= n; b1 /= n; b2 /= n;
+    rot = [a0, a1, a2, b0, b1, b2, a1 * b2 - a2 * b1, a2 * b0 - a0 * b2, a0 * b1 - a1 * b0];
+  }
+
+  function env(rx, ry, rz, px, py, pz, out) {
+    // rz > 0: w górę (sufit, lampy, okno); rz < 0: w dół (stół)
+    if (rz < -0.02) {
+      const t = pz / -rz, hx = px + rx * t, hy = py + ry * t;
+      const L = lampLight(hx, hy);
+      // własny cień kulki i dziura widziane w odbiciu
+      const dbx = hx - ball.x, dby = hy - ball.y, db2 = (dbx * dbx + dby * dby) / (ball.r * ball.r);
+      const ao = 1 - 0.75 * Math.exp(-db2 * 0.9);
+      const dh = Math.hypot(hx - hole.x, hy - hole.y);
+      if (dh < hole.r) { out[0] = out[1] = out[2] = 0.002; return; }
+      const holeSh = dh < hole.r * 1.4 ? 0.4 + 0.6 * (dh - hole.r) / (hole.r * .4) : 1;
+      const onFelt = hx > F.x0 && hx < F.x1 && hy > F.y0 && hy < F.y1;
+      const base = onFelt ? FELT_LIN : (hx > F.x0 - CUSH && hx < F.x1 + CUSH && hy > F.y0 - CUSH && hy < F.y1 + CUSH) ? FELT_LIN : WOOD_LIN;
+      const k = L * L * 1.3 * ao * holeSh;
+      const hz = Math.min(1, -rz * 6); // przy horyzoncie przechodzi w ścianę
+      out[0] = base[0] * k * hz + 0.05 * (1 - hz);
+      out[1] = base[1] * k * hz + 0.035 * (1 - hz);
+      out[2] = base[2] * k * hz + 0.025 * (1 - hz);
+      return;
+    }
+    // Lampa bilardowa: długa oprawa z trzema kloszami zawieszona nad stołem
+    if (rz > 0.08) {
+      const t = (LAMP_H - pz) / rz, hx = px + rx * t, hy = py + ry * t;
+      const fx = Math.abs(hx - W / 2), fy = Math.abs(hy - lamps[1].y);
+      const hw = W * 0.2, hh = (lamps[2].y - lamps[0].y) / 2 + W * 0.2;
+      if (fx < hw && fy < hh) {
+        if (fx > hw * .93 || fy > hh * .97) { out[0] = 1.1; out[1] = .78; out[2] = .38; return; } // mosiężna krawędź
+        let best = 1e9;
+        for (const Lp of lamps) best = Math.min(best, Math.hypot(hx - Lp.x, hy - Lp.y));
+        const R0 = W * 0.13;
+        if (best < R0 * .55) { const k = 30; out[0] = k; out[1] = k * .92; out[2] = k * .78; return; }   // żarówka
+        if (best < R0) { const k = 3.2 * (1 - (best - R0 * .55) / (R0 * .45)) + .5;               // wnętrze klosza
+          out[0] = k; out[1] = k * .9; out[2] = k * .7; return; }
+        if (best < R0 * 1.12) { out[0] = 0.9; out[1] = 0.62; out[2] = 0.28; return; }             // mosiężna obręcz
+        out[0] = 0.012; out[1] = 0.05; out[2] = 0.022; return;                                      // zielona oprawa
+      }
+    }
+    // ściany i sufit
+    const el = Math.asin(Math.min(1, rz));
+    let r = 0.055 - el * 0.03, g = 0.04 - el * 0.022, b = 0.03 - el * 0.015;
+    if (rz > 0.35) {
+      // jasny sufit (to on daje kulce lustrzany połysk) z miękkimi plamami światła
+      const t = (LAMP_H * 1.8 - pz) / rz, hx = px + rx * t, hy = py + ry * t;
+      const v = noise(hx * .004 + 3, hy * .004) * .35 + .65;
+      const k = (0.35 + 0.55 * (rz - 0.35) / 0.65) * v;
+      const e = Math.min(1, (rz - 0.35) / 0.04); // ostra linia horyzontu
+      r = r + (k * 1.08 - r) * e; g = g + (k - g) * e; b = b + (k * .88 - b) * e;
+    }
+    if (rz < 0.25) { const w = 1 - rz / 0.25; r += 0.07 * w; g += 0.045 * w; b += 0.025 * w; }
+    // boazeria na ścianach
+    if (rz < 0.3) {
+      const azp = Math.atan2(ry, rx) * 6 / Math.PI;
+      const panel = Math.abs((azp % 1 + 1) % 1 - .5) < .06 ? .4 : 1;
+      r *= panel; g *= panel; b *= panel;
+    }
+    // okno z szprosami
+    const az = Math.atan2(ry, rx);
+    let daz = az - WIN.az; if (daz > Math.PI) daz -= 2 * Math.PI; if (daz < -Math.PI) daz += 2 * Math.PI;
+    if (el > WIN.el0 && el < WIN.el1 && Math.abs(daz) < WIN.w) {
+      const u = daz / WIN.w, v = (el - WIN.el0) / (WIN.el1 - WIN.el0);
+      const bar = Math.abs(u) < 0.035 || Math.abs(v - 0.5) < 0.04;
+      if (!bar) { const s = 1.6 + 0.8 * v; r += 0.75 * s; g += 0.85 * s; b += 1.0 * s; }
+    }
+    out[0] = r; out[1] = g; out[2] = b;
+  }
+
+  const tm = x => { // ACES + gamma
+    const v = (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14);
+    return 255 * Math.pow(v < 0 ? 0 : v > 1 ? 1 : v, 1 / 2.2);
+  };
+
+  function renderBall() {
+    const r = ball.r, rp = r * DPR, size = Math.ceil(rp * 2 + 2);
+    if (ballCv.width !== size) { ballCv.width = ballCv.height = size; ballImg = bctx.createImageData(size, size); }
+    const d = ballImg.data, c0 = size / 2, col = [0, 0, 0], m = rot;
+    for (let j = 0; j < size; j++) {
+      for (let i = 0; i < size; i++) {
+        const k = (j * size + i) * 4;
+        const sx = (i + .5 - c0) / rp, sy = (j + .5 - c0) / rp, q = sx * sx + sy * sy;
+        if (q > 1.06) { d[k + 3] = 0; continue; }
+        const qc = Math.min(q, 1), nz = Math.sqrt(1 - qc);
+        const nx = sx / Math.sqrt(Math.max(q, 1e-9)) * Math.sqrt(qc), ny = sy / Math.sqrt(Math.max(q, 1e-9)) * Math.sqrt(qc);
+        // odbicie promienia patrzącego z góry: R = V - 2(V·N)N, V = (0,0,-1)
+        const rx = 2 * nz * nx, ry = 2 * nz * ny, rz = 2 * nz * nz - 1;
+        env(rx, ry, rz, ball.x + nx * r, ball.y + ny * r, r + nz * r, col);
+        // Fresnel dla stali chromowanej
+        const fr = 0.62 + 0.38 * Math.pow(1 - nz, 5);
+        // ślady toczące się razem z kulką
+        const ox = m[0] * nx + m[3] * ny + m[6] * nz, oy = m[1] * nx + m[4] * ny + m[7] * nz, oz = m[2] * nx + m[5] * ny + m[8] * nz;
+        let smudge = 1;
+        for (let s = 0; s < marks.length; s++) {
+          const mk = marks[s], dd = ox * mk[0] + oy * mk[1] + oz * mk[2];
+          if (dd > 1 - mk[3] * mk[3]) smudge *= 0.86 + 0.14 * (1 - dd) / (mk[3] * mk[3]);
+        }
+        const fall = (1 - ball.fall * 0.85) * (q > .82 ? 1 - .5 * Math.min(1, (q - .82) / .18) : 1); // ciemniejszy kontur
+        d[k]     = tm(col[0] * fr * 0.96 * smudge * fall);
+        d[k + 1] = tm(col[1] * fr * 0.98 * smudge * fall);
+        d[k + 2] = tm(col[2] * fr * 1.02 * smudge * fall);
+        const dist = Math.sqrt(q) * rp;
+        d[k + 3] = 255 * clamp01(rp - dist + .5);
+      }
+    }
+    bctx.putImageData(ballImg, 0, 0);
+  }
+
+  // ---------- Sterowanie: czujnik przechyłu ----------
+  let tilt = { x: 0, y: 0 }, raw = { b: 0, g: 0 }, zero = { b: 0, g: 0 }, gotSensor = false;
+  function onOrient(e) {
+    if (e.beta == null) return;
+    gotSensor = true;
+    raw.b = e.beta; raw.g = e.gamma;
+  }
+  function calibrate() { zero.b = raw.b; zero.g = raw.g; }
+  function readTilt() {
+    let gx = raw.g - zero.g, gy = raw.b - zero.b;
+    const ang = (screen.orientation && screen.orientation.angle) ?? window.orientation ?? 0;
+    if (ang === 90)       [gx, gy] = [gy, -gx];
+    else if (ang === -90 || ang === 270) [gx, gy] = [-gy, gx];
+    else if (ang === 180) [gx, gy] = [-gx, -gy];
+    const cl = v => Math.max(-35, Math.min(35, v));
+    tilt.x = cl(gx) / 35; tilt.y = cl(gy) / 35;
+  }
+  const keys = {};
+  addEventListener('keydown', e => keys[e.key] = true);
+  addEventListener('keyup', e => keys[e.key] = false);
+  function readKeys() {
+    if (gotSensor) return;
+    tilt.x = (keys.ArrowRight ? 1 : 0) - (keys.ArrowLeft ? 1 : 0);
+    tilt.y = (keys.ArrowDown ? 1 : 0) - (keys.ArrowUp ? 1 : 0);
+  }
+  async function askPermission() {
+    if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const r = await DeviceOrientationEvent.requestPermission();
+      if (r !== 'granted') throw new Error('Brak zgody na czujnik ruchu. Zamknij i otwórz aplikację, potem zezwól.');
+    }
+    addEventListener('deviceorientation', onOrient);
+  }
+
+  // ---------- Stan gry ----------
+  const S = { state: 'menu', t: 0, score: 0, bonus: 0 };
+  const ball = { x: 0, y: 0, vx: 0, vy: 0, r: 16, fall: 0 };
+  const hole = { x: -999, y: -999, vx: 0, vy: 0, r: 30 };
+  let stars = [], particles = [], starTimer = 0, chalkTimer = 0, holeBase = 0;
+  let best = 0;
+  try { best = +localStorage.getItem('kulka-best') || 0; } catch {}
+  $('best').textContent = best;
+
+  function clampToTable() {
+    const p = ball.r;
+    ball.x = Math.max(F.x0 + p, Math.min(F.x1 - p, ball.x));
+    ball.y = Math.max(F.y0 + p, Math.min(F.y1 - p, ball.y));
+  }
+  function reset() {
+    const unit = Math.min(W, H);
+    ball.r = Math.max(14, unit * 0.05);
+    hole.r = hole.rt = holeBase = ball.r * 1.7;
+    ball.x = W / 2; ball.y = F.y0 + (F.y1 - F.y0) * 0.78; ball.vx = ball.vy = 0; ball.fall = 0;
+    hole.x = W / 2; hole.y = F.y0 + (F.y1 - F.y0) * 0.15; hole.vx = hole.vy = 0;
+    S.t = 0; S.score = 0; S.bonus = 0; stars = []; particles = [];
+    starTimer = 1.5; chalkTimer = 9;
+  }
+  function spawnStar(kind = 'star') {
+    for (let tries = 0; tries < 20; tries++) {
+      const m = 24;
+      const x = F.x0 + m + Math.random() * (F.x1 - F.x0 - 2 * m), y = F.y0 + m + Math.random() * (F.y1 - F.y0 - 2 * m);
+      if (Math.hypot(x - hole.x, y - hole.y) > hole.r * 4 && Math.hypot(x - ball.x, y - ball.y) > 80) {
+        stars.push({ x, y, kind, life: kind === 'chalk' ? 9 : 7, spin: Math.random() * 6 });
+        return;
+      }
+    }
+  }
+
+  // ---------- Pętla ----------
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.033, (now - last) / 1000);
+    last = now;
+    if (innerWidth !== W || innerHeight !== H) resize();
+    if (S.state === 'play' || S.state === 'falling') update(dt);
+    draw(now / 1000);
+    requestAnimationFrame(frame);
+  }
+
+  function update(dt) {
+    readTilt(); readKeys();
+    if (S.state === 'falling') {
+      ball.fall = Math.min(1, ball.fall + dt * 2.2);
+      const ox = ball.x, oy = ball.y;
+      ball.x += (hole.x - ball.x) * Math.min(1, dt * 10);
+      ball.y += (hole.y - ball.y) * Math.min(1, dt * 10);
+      rollBall(ball.x - ox, ball.y - oy, ball.r);
+      if (ball.fall >= 1) gameOver();
+      stepParticles(dt);
+      return;
+    }
+    S.t += dt;
+    const unit = Math.min(W, H);
+
+    const acc = unit * 2.6;
+    ball.vx += tilt.x * acc * dt; ball.vy += tilt.y * acc * dt;
+    const fr = Math.pow(0.35, dt);
+    ball.vx *= fr; ball.vy *= fr;
+    const ox = ball.x, oy = ball.y;
+    ball.x += ball.vx * dt; ball.y += ball.vy * dt;
+    const p = ball.r;
+    if (ball.x < F.x0 + p) { ball.x = F.x0 + p; ball.vx = -ball.vx * 0.55; }
+    if (ball.x > F.x1 - p) { ball.x = F.x1 - p; ball.vx = -ball.vx * 0.55; }
+    if (ball.y < F.y0 + p) { ball.y = F.y0 + p; ball.vy = -ball.vy * 0.55; }
+    if (ball.y > F.y1 - p) { ball.y = F.y1 - p; ball.vy = -ball.vy * 0.55; }
+    rollBall(ball.x - ox, ball.y - oy, ball.r);
+
+    // Dziura goni kulkę: rośnie prędkość i rozmiar, ma bezwładność
+    const maxV = unit * (0.16 + Math.min(0.55, S.t * 0.012));
+    const steer = unit * (0.5 + Math.min(1.2, S.t * 0.02));
+    const dx = ball.x - hole.x, dy = ball.y - hole.y, d = Math.hypot(dx, dy) || 1;
+    hole.vx += dx / d * steer * dt; hole.vy += dy / d * steer * dt;
+    const hv = Math.hypot(hole.vx, hole.vy);
+    if (hv > maxV) { hole.vx *= maxV / hv; hole.vy *= maxV / hv; }
+    hole.x += hole.vx * dt; hole.y += hole.vy * dt;
+    // Dziura powoli rośnie; kreda ją zmniejsza (płynnie dochodzi do celu)
+    hole.rt = Math.min(hole.rt + ball.r * 0.035 * dt, (F.x1 - F.x0) * 0.42);
+    hole.r += (hole.rt - hole.r) * Math.min(1, dt * 4);
+    hole.x = Math.max(F.x0 + hole.r * .6, Math.min(F.x1 - hole.r * .6, hole.x));
+    hole.y = Math.max(F.y0 + hole.r * .6, Math.min(F.y1 - hole.r * .6, hole.y));
+
+    if (d < hole.r - ball.r * 0.4) { S.state = 'falling'; return; }
+
+    starTimer -= dt;
+    if (starTimer <= 0) { spawnStar(); starTimer = 3 + Math.random() * 3; }
+    chalkTimer -= dt;
+    if (chalkTimer <= 0) {
+      if (hole.rt > holeBase * 1.15 && !stars.some(s => s.kind === 'chalk')) spawnStar('chalk');
+      chalkTimer = 8 + Math.random() * 5;
+    }
+    for (const s of stars) {
+      s.life -= dt; s.spin += dt * 2;
+      if (Math.hypot(s.x - ball.x, s.y - ball.y) < ball.r + 13) {
+        s.life = -1;
+        if (s.kind === 'chalk') { hole.rt = Math.max(holeBase, hole.rt * 0.62); burst(s.x, s.y, '#8fd0ff'); burst(hole.x, hole.y, '#8fd0ff'); }
+        else { S.bonus += 5; burst(s.x, s.y); }
+      }
+      if (Math.hypot(s.x - hole.x, s.y - hole.y) < hole.r) s.life = -1;
+    }
+    stars = stars.filter(s => s.life > 0);
+    stepParticles(dt);
+    S.score = Math.floor(S.t) + S.bonus;
+    $('score').textContent = S.score;
+  }
+
+  function burst(x, y, color = '#ffe9a8') {
+    for (let i = 0; i < 16; i++) {
+      const a = Math.random() * Math.PI * 2, v = 60 + Math.random() * 150;
+      particles.push({ x, y, color, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: .6 });
+    }
+  }
+  function stepParticles(dt) {
+    for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= .92; p.vy *= .92; p.life -= dt; }
+    particles = particles.filter(p => p.life > 0);
+  }
+
+  // ---------- Rysowanie ----------
+  function drawStar(x, y, r, rot, alpha) {
+    ctx.save(); ctx.translate(x, y); ctx.globalAlpha = alpha;
+    // cień na suknie
+    ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.ellipse(2, 3, r * .8, r * .7, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.rotate(rot);
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const rr = i % 2 ? r * 0.46 : r, a = i * Math.PI / 5 - Math.PI / 2;
+      ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+    }
+    ctx.closePath();
+    const g = ctx.createLinearGradient(-r, -r, r, r);
+    g.addColorStop(0, '#fff3c4'); g.addColorStop(.45, '#f0c24e'); g.addColorStop(1, '#a8741c');
+    ctx.fillStyle = g; ctx.shadowColor = 'rgba(255,200,80,.7)'; ctx.shadowBlur = 10; ctx.fill();
+    ctx.restore();
+  }
+
+  // Niebieska kostka kredy bilardowej (widok z góry, z wgłębieniem)
+  function drawChalk(x, y, rot, alpha, time) {
+    const s = 11;
+    ctx.save(); ctx.translate(x, y); ctx.globalAlpha = alpha;
+    const pulse = .5 + .5 * Math.sin(time * 5);
+    const glow = ctx.createRadialGradient(0, 0, s, 0, 0, s * 2.6);
+    glow.addColorStop(0, `rgba(110,190,255,${.35 + .25 * pulse})`); glow.addColorStop(1, 'rgba(110,190,255,0)');
+    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(0, 0, s * 2.6, 0, Math.PI * 2); ctx.fill();
+    ctx.rotate(rot * .3);
+    ctx.fillStyle = 'rgba(0,0,0,.35)'; rr(ctx, -s + 2, -s + 3, s * 2, s * 2, 3); ctx.fill();
+    let g = ctx.createLinearGradient(-s, -s, s, s);
+    g.addColorStop(0, '#5fb4f0'); g.addColorStop(.5, '#1f7fd0'); g.addColorStop(1, '#0d4f8f');
+    ctx.fillStyle = g; rr(ctx, -s, -s, s * 2, s * 2, 3); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1; ctx.stroke();
+    g = ctx.createRadialGradient(-2, -2, 1, 0, 0, s * .62);
+    g.addColorStop(0, '#0b3f73'); g.addColorStop(.8, '#155f9f'); g.addColorStop(1, '#8ccaf5');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, s * .62, 0, Math.PI * 2); ctx.fill();
+    for (let i = 0; i < 18; i++) { // pylący się proszek kredy
+      ctx.fillStyle = 'rgba(200,235,255,.5)';
+      ctx.fillRect(hash(i, 3) * s * 2 - s, hash(i, 8) * s * 2 - s, 1, 1);
+    }
+    ctx.restore();
+  }
+  function rr(c, x, y, w, h, r) {
+    c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r);
+    c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath();
+  }
+
+  function drawBallShadow() {
+    const r = ball.r * (1 - ball.fall * .8);
+    if (r < 1) return;
+    for (const L of lamps) {
+      const sx = ball.x + (ball.x - L.x) / LAMP_H * r * 1.4, sy = ball.y + (ball.y - L.y) / LAMP_H * r * 1.4;
+      const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, r * 1.25);
+      g.addColorStop(0, 'rgba(0,0,0,.28)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(sx, sy, r * 1.25, 0, Math.PI * 2); ctx.fill();
+    }
+    const g = ctx.createRadialGradient(ball.x, ball.y, 0, ball.x, ball.y, r * .55);
+    g.addColorStop(0, 'rgba(0,0,0,.6)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(ball.x, ball.y, r * .55, 0, Math.PI * 2); ctx.fill();
+  }
+
+  function draw(time) {
+    ctx.drawImage(table, 0, 0, W, H);
+    if (S.state === 'menu') return;
+
+    drawPocket(ctx, hole.x, hole.y, hole.r * (1 + Math.sin(time * 3) * 0.015), false);
+    for (const s of stars) s.kind === 'chalk' ? drawChalk(s.x, s.y, s.spin, Math.min(1, s.life), time) : drawStar(s.x, s.y, 12, s.spin, Math.min(1, s.life));
+    for (const p of particles) {
+      ctx.globalAlpha = p.life / .6; ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 2.2, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // ostrzeżenie: czerwona poświata gdy dziura blisko
+    const dd = Math.hypot(ball.x - hole.x, ball.y - hole.y) - hole.r - ball.r;
+    if (S.state === 'play' && dd < 50) {
+      const g = ctx.createRadialGradient(ball.x, ball.y, ball.r, ball.x, ball.y, ball.r * 2.2);
+      g.addColorStop(0, `rgba(255,60,40,${.45 * (1 - dd / 50)})`); g.addColorStop(1, 'rgba(255,60,40,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.r * 2.2, 0, Math.PI * 2); ctx.fill();
+    }
+
+    if (S.state !== 'over' || ball.fall < 1) {
+      if (ball.fall === 0) drawBallShadow();
+      renderBall();
+      const s = 1 - ball.fall * 0.7, size = ballCv.width / DPR * s;
+      ctx.globalAlpha = 1 - ball.fall * .5;
+      ctx.drawImage(ballCv, ball.x - size / 2, ball.y - size / 2, size, size);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // ---------- Ekrany ----------
+  function startGame() {
+    calibrate(); reset();
+    S.state = 'play';
+    $('start').classList.add('hidden'); $('over').classList.add('hidden');
+  }
+  function gameOver() {
+    S.state = 'over';
+    const newBest = S.score > best;
+    if (newBest) { best = S.score; try { localStorage.setItem('kulka-best', best); } catch {} }
+    $('best').textContent = best;
+    $('final').textContent = S.score;
+    $('overMsg').textContent = newBest ? 'Nowy rekord! 🏆' : `Rekord: ${best}`;
+    $('over').classList.remove('hidden');
+  }
+
+  $('play').addEventListener('click', async () => {
+    try { await askPermission(); }
+    catch (e) { $('err').textContent = e.message; return; }
+    $('err').textContent = '';
+    setTimeout(startGame, 150);
+  });
+  $('again').addEventListener('click', startGame);
+
+  let rt;
+  addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(resize, 120); });
+  resize();
+  requestAnimationFrame(frame);
+
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+})();
+</script>
+</body>
+</html>
