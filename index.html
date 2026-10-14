@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Kulka">
 <meta name="theme-color" content="#000000">
 <link rel="manifest" href="manifest.json">
@@ -15,12 +15,12 @@
 <style>
   :root { --brass: #e8c77a; --cream: #f6ecd6; }
   html, body {
-    margin: 0; height: 100%; overflow: hidden; background: #000;
+    margin: 0; height: 100%; overflow: visible; background: #000;
     touch-action: none; -webkit-user-select: none; user-select: none;
     font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     color: var(--cream);
   }
-  #c { position: fixed; left: 0; top: 0; width: 100%; height: 100%; display: block; }
+  #c { position: absolute; left: 0; top: 0; display: block; }
   #safe { position: fixed; top: 0; height: env(safe-area-inset-top, 0px); visibility: hidden; }
   #safeB { position: fixed; top: 0; height: env(safe-area-inset-bottom, 0px); visibility: hidden; }
   #hud {
@@ -73,6 +73,7 @@
   <button id="play">Graj</button>
   <p class="hint">Trzymaj telefon tak, jak lubisz — ta pozycja zostanie ustawiona jako „poziom”.</p>
   <p id="err"></p>
+  <p id="diag" class="hint" style="font-size:11px;opacity:.45"></p>
 </div>
 
 <div id="over" class="overlay hidden">
@@ -119,12 +120,19 @@
   }
 
   // Pełny ekran także w trybie aplikacji na iPhonie (innerHeight bywa krótszy o pasek statusu)
-  // Rozmiar bierzemy z faktycznie wyrenderowanego płótna (pełny obszar strony).
-  // Pasek statusu jest celowo "black", nie "black-translucent": przy przezroczystym iOS zostawia
-  // na dole ekranu pas wysokości paska statusu, w którym strona nie może nic narysować.
+  // iOS w trybie aplikacji (ikona na ekranie początkowym) z przezroczystym paskiem statusu podaje
+  // innerHeight pomniejszone o pasek statusu, choć strona zajmuje cały ekran. Wtedy na dole zostaje pas,
+  // którego przypięte (fixed) elementy nie pokrywają. Dlatego w trybie aplikacji bierzemy pełną wysokość
+  // ekranu, a płótno jest zwykłym elementem (absolute), które może sięgnąć w ten pas.
+  const isApp = () => navigator.standalone === true ||
+    matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches;
+  let APP_GAP = 0;
   function screenSize() {
-    const r = cv.getBoundingClientRect();
-    return [Math.round(r.width) || innerWidth, Math.round(r.height) || innerHeight];
+    const w = innerWidth, ih = Math.max(innerHeight, document.documentElement.clientHeight);
+    let h = ih;
+    if (isApp() && w < h && screen.height > h) h = screen.height;
+    APP_GAP = h - ih;
+    return [w, h];
   }
   let SAFE_T = 0, FRAME_T = 0, FRAME_B = 0;
   const HUD_H = 26;
@@ -132,8 +140,10 @@
     DPR = Math.min(window.devicePixelRatio || 1, 3);
     [W, H] = screenSize();
     cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+    cv.style.width = W + 'px'; cv.style.height = H + 'px';
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     SAFE_T = $('safe').getBoundingClientRect().height || 0;
+    if (APP_GAP > 0 && APP_GAP < 120) SAFE_T = Math.max(SAFE_T, APP_GAP); // pasek statusu, gdy iOS go nie zgłasza
     const unit = Math.min(W, H);
     RAIL = Math.max(26, unit * 0.075);
     // górna i dolna rama tej samej grubości (stół wyśrodkowany); u góry mieści się pasek z wynikami
@@ -144,7 +154,8 @@
     RAIL_T = FRAME_T + RAIL + HUD_H;   // górna rama mieści pasek wyników
     RAIL_B = FRAME_B + RAIL;
     const hud = $('hud');
-    hud.style.top = FRAME_T + 'px'; hud.style.height = (RAIL + HUD_H) + 'px';
+    hud.style.top = FRAME_T + 'px';
+    $('diag').textContent = `wersja 9 · okno ${innerWidth}×${innerHeight} · ekran ${screen.width}×${screen.height} · gra ${W}×${H} · pasek ${Math.round(SAFE_T)}/${Math.round(safeB)} · app ${isApp() ? 'tak' : 'nie'}`; hud.style.height = (RAIL + HUD_H) + 'px';
     CUSH = RAIL * 0.42;
     F.x0 = RAIL + CUSH; F.x1 = W - RAIL - CUSH;
     F.y0 = RAIL_T + CUSH; F.y1 = H - RAIL_B - CUSH;
@@ -903,6 +914,9 @@
   });
   $('again').addEventListener('click', startGame);
 
+  // strona jest wyższa niż zgłaszane okno — nie pozwalamy jej przewijać
+  addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+  addEventListener('scroll', () => { if (scrollY) scrollTo(0, 0); });
   let rt;
   addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(resize, 120); });
   resize();
