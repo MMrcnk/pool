@@ -20,7 +20,7 @@
     font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     color: var(--cream);
   }
-  #c { position: fixed; left: 0; top: 0; display: block; }
+  #c { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; height: 100lvh; display: block; }
   #safe { position: fixed; top: 0; height: env(safe-area-inset-top, 0px); visibility: hidden; }
   #safeB { position: fixed; top: 0; height: env(safe-area-inset-bottom, 0px); visibility: hidden; }
   #hud {
@@ -119,10 +119,11 @@
   }
 
   // Pełny ekran także w trybie aplikacji na iPhonie (innerHeight bywa krótszy o pasek statusu)
+  // Rozmiar bierzemy z faktycznie wyrenderowanego płótna (CSS: 100lvh = pełny ekran także w trybie aplikacji).
+  // window.innerHeight na iPhonie w trybie aplikacji bywa zaniżony o pasek statusu.
   function screenSize() {
-    let w = window.innerWidth, h = Math.max(window.innerHeight, document.documentElement.clientHeight);
-    if (navigator.standalone && w < h) h = Math.max(h, screen.height);
-    return [w, h];
+    const r = cv.getBoundingClientRect();
+    return [Math.round(r.width) || innerWidth, Math.round(r.height) || innerHeight];
   }
   let SAFE_T = 0, FRAME_T = 0, FRAME_B = 0;
   const HUD_H = 26;
@@ -130,7 +131,6 @@
     DPR = Math.min(window.devicePixelRatio || 1, 3);
     [W, H] = screenSize();
     cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
-    cv.style.width = W + 'px'; cv.style.height = H + 'px';
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     SAFE_T = $('safe').getBoundingClientRect().height || 0;
     const unit = Math.min(W, H);
