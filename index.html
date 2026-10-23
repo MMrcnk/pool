@@ -145,16 +145,16 @@
     if (APP_GAP > 0 && APP_GAP < 120) SAFE_T = Math.max(SAFE_T, APP_GAP); // pasek statusu, gdy iOS go nie zgłasza
     const unit = Math.min(W, H);
     RAIL = Math.max(26, unit * 0.075);
-    // górna i dolna rama tej samej grubości (stół wyśrodkowany); u góry mieści się pasek z wynikami
+    // Symetria: górna i dolna rama mają identyczną grubość liczoną od krawędzi ekranu.
+    // EDGE = strefa pod paskiem statusu / nad paskiem home (większa z dwóch, żeby było równo).
     const safeB = $('safeB').getBoundingClientRect().height || 0;
-    // drewniana rama: od tuż pod paskiem statusu do tuż nad dolną krawędzią; poza nią stół się rozpływa
-    FRAME_T = Math.max(SAFE_T + 2, 12);
-    FRAME_B = Math.max(safeB + 8, 16);
-    RAIL_T = FRAME_T + RAIL + HUD_H;   // górna rama mieści pasek wyników
-    RAIL_B = FRAME_B + RAIL;
+    const EDGE = Math.max(SAFE_T, safeB, 20);
+    FRAME_T = EDGE; FRAME_B = EDGE;
+    RAIL_T = EDGE + HUD_H + RAIL;      // u góry: strefa + pasek wyników + drewno
+    RAIL_B = EDGE + HUD_H + RAIL;      // u dołu dokładnie tyle samo
     const hud = $('hud');
-    hud.style.top = FRAME_T + 'px';
-    hud.style.height = (RAIL + HUD_H) + 'px';
+    hud.style.top = Math.max(SAFE_T, EDGE - HUD_H * 0.35) + 'px';
+    hud.style.height = HUD_H + 'px';
     CUSH = RAIL * 0.42;
     F.x0 = RAIL + CUSH; F.x1 = W - RAIL - CUSH;
     F.y0 = RAIL_T + CUSH; F.y1 = H - RAIL_B - CUSH;
@@ -205,7 +205,7 @@
           let along, acrossPx, thick, seed;
           if (m === dl || m === dr) { along = y; acrossPx = m === dl ? x : W - x; thick = RAIL; seed = m === dl ? 3 : 7; }
           else { along = x; acrossPx = m === dt ? y : H - y; thick = m === dt ? RAIL_T : RAIL_B; seed = m === dt ? 11 : 17; }
-          const vis = m === dt ? RAIL + HUD_H : RAIL;
+          const vis = (m === dt || m === db) ? RAIL + HUD_H : RAIL; // góra i dół identyczne
           const a = clamp01((acrossPx - (thick - vis)) / vis); // 0 = zewnętrzna krawędź, 1 = przy bandzie
           const wav = noise(along * .012 + seed, acrossPx * .05) * 5;
           const stripe = Math.sin(acrossPx * .5 + wav);
@@ -268,14 +268,16 @@
         return g;
       };
       // lekkie przyciemnienie przy samej krawędzi ekranu, żeby było głębiej (bez czarnego pasa)
-      oc.fillStyle = grad([[0, 'rgba(0,0,0,.3)'], [1, 'rgba(0,0,0,0)']]); oc.fillRect(0, 0, sw, sh);
-      // maska: pełne rozmycie przy krawędzi ekranu, płynne przejście w ostre drewno przy ramie
+      oc.fillStyle = grad([[0, 'rgba(0,0,0,.18)'], [1, 'rgba(0,0,0,0)']]); oc.fillRect(0, 0, sw, sh);
+      // maska: delikatne rozmycie przy krawędzi ekranu, płynne przejście w ostre drewno
       oc.globalCompositeOperation = 'destination-in';
-      oc.fillStyle = grad([[0, '#000'], [.5, 'rgba(0,0,0,.9)'], [1, 'rgba(0,0,0,0)']]); oc.fillRect(0, 0, sw, sh);
+      oc.fillStyle = grad([[0, 'rgba(0,0,0,.85)'], [.45, 'rgba(0,0,0,.55)'], [1, 'rgba(0,0,0,0)']]); oc.fillRect(0, 0, sw, sh);
       t.save(); t.setTransform(1, 0, 0, 1, 0, 0); t.drawImage(out, 0, sy); t.restore();
     };
-    blurStrip(0, FRAME_T + 14, true);
-    blurStrip(H - FRAME_B - 14, H, false);
+    // identyczne pasy rozmycia u góry i u dołu
+    const BLUR_H = FRAME_T + HUD_H * 0.5;
+    blurStrip(0, BLUR_H, true);
+    blurStrip(H - BLUR_H, H, false);
     // Punkt środkowy na suknie
     t.fillStyle = 'rgba(255,255,255,.18)';
     t.beginPath(); t.arc(W / 2, F.y0 + fh * .75, 2.2, 0, Math.PI * 2); t.fill();
